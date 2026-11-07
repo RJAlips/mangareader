@@ -241,7 +241,6 @@ public final class DatabaseManager: ObservableObject {
     
     // MARK: - Reading Progress
     
-    @MainActor
     public func recordReadingProgress(
         chapter: ChapterItem,
         manga: MangaItem,

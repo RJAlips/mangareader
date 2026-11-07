@@ -36,6 +36,7 @@ public final class DownloadsViewModel: ObservableObject {
         
         // Listen to download tasks
         downloadManager.$tasks
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] tasks in
                 guard let self = self else { return }
                 self.activeTasks = tasks.filter {
@@ -61,6 +62,7 @@ public final class DownloadsViewModel: ObservableObject {
         
         // Listen to chapters changes (e.g. downloads completed or deleted)
         db.$chaptersList
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshGroups()
             }

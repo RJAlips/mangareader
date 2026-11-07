@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 public struct WebtoonReaderView: View {
     @ObservedObject public var viewModel: ReaderViewModel

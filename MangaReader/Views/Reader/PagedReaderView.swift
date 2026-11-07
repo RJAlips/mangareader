@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 public struct PagedReaderView: View {
     @ObservedObject public var viewModel: ReaderViewModel

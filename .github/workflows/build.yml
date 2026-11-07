@@ -34,6 +34,9 @@ jobs:
             echo '```text' >> $GITHUB_STEP_SUMMARY
             grep -E "(error:|fatal error:|BUILD FAILED)" xcodebuild.log | head -n 50 >> $GITHUB_STEP_SUMMARY || true
             echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E "(error:|fatal error:)" xcodebuild.log | head -n 25 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
           fi
 
       - name: Package Payload into IPA

@@ -130,50 +130,63 @@ public struct MangaDownloadDetailView: View {
     
     public var body: some View {
         List {
-            // Section 1: In Progress / Queued
-            let inProgress = viewModel.inProgressTasks(for: manga.id)
-            if !inProgress.isEmpty {
-                Section("In Progress / Queued (\(inProgress.count))") {
-                    ForEach(inProgress) { task in
-                        inProgressTaskRow(task: task)
-                    }
-                }
-            }
-            
-            // Section 2: Downloaded Chapters
-            let downloaded = viewModel.downloadedChapters(for: manga.id)
-            Section("Downloaded (\(downloaded.count))") {
-                if downloaded.isEmpty {
-                    Text("No chapters downloaded for this title yet.")
-                        .font(.captionMedium)
-                        .foregroundColor(.textTertiary)
-                } else {
-                    ForEach(downloaded) { chapter in
-                        downloadedChapterRow(chapter: chapter)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    viewModel.deleteChapter(chapter)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
-                    }
-                }
-            }
-            
-            // Section 3: Not Downloaded
-            let notDownloaded = viewModel.notDownloadedChapters(for: manga.id)
-            if !notDownloaded.isEmpty {
-                Section("Not Downloaded (\(notDownloaded.count))") {
-                    ForEach(notDownloaded) { chapter in
-                        notDownloadedChapterRow(chapter: chapter)
-                    }
-                }
-            }
+            inProgressSection
+            downloadedSection
+            notDownloadedSection
         }
         .listStyle(InsetGroupedListStyle())
         .navigationTitle(manga.title)
         .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    // MARK: - Section 1: In Progress / Queued
+    @ViewBuilder
+    private var inProgressSection: some View {
+        let inProgress = viewModel.inProgressTasks(for: manga.id)
+        if !inProgress.isEmpty {
+            Section("In Progress / Queued (\(inProgress.count))") {
+                ForEach(inProgress) { task in
+                    inProgressTaskRow(task: task)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Section 2: Downloaded Chapters
+    @ViewBuilder
+    private var downloadedSection: some View {
+        let downloaded = viewModel.downloadedChapters(for: manga.id)
+        Section("Downloaded (\(downloaded.count))") {
+            if downloaded.isEmpty {
+                Text("No chapters downloaded for this title yet.")
+                    .font(.captionMedium)
+                    .foregroundColor(.textTertiary)
+            } else {
+                ForEach(downloaded) { chapter in
+                    downloadedChapterRow(chapter: chapter)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                viewModel.deleteChapter(chapter)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Section 3: Not Downloaded
+    @ViewBuilder
+    private var notDownloadedSection: some View {
+        let notDownloaded = viewModel.notDownloadedChapters(for: manga.id)
+        if !notDownloaded.isEmpty {
+            Section("Not Downloaded (\(notDownloaded.count))") {
+                ForEach(notDownloaded) { chapter in
+                    notDownloadedChapterRow(chapter: chapter)
+                }
+            }
+        }
     }
     
     // In Progress / Queued Row
