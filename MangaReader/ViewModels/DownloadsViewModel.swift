@@ -135,13 +135,14 @@ public final class DownloadsViewModel: ObservableObject {
     }
     
     public func inProgressTasks(for mangaID: UUID) -> [DownloadTaskItem] {
-        return downloadManager.tasks.filter {
-            $0.manga.id == mangaID && {
-                switch $0.status {
-                case .downloading, .queued, .paused: return true
-                default: return false
-                }
-            }()
+        return downloadManager.tasks.filter { task in
+            guard task.manga.id == mangaID else { return false }
+            switch task.status {
+            case .downloading, .queued, .paused:
+                return true
+            default:
+                return false
+            }
         }
     }
     
