@@ -121,6 +121,20 @@ public final class SourceManager: ObservableObject {
         var addedCount = 0
         var repoName = url.host ?? "Custom Repository"
         
+        let aidokuBaseURL = URL(string: "https://aidoku-community.github.io/sources/")!
+        let baseRepoURL: URL
+        if cleanURLString.contains("aidoku") {
+            baseRepoURL = aidokuBaseURL
+        } else if cleanURLString.hasSuffix(".json") {
+            var str = url.deletingLastPathComponent().absoluteString
+            if !str.hasSuffix("/") { str += "/" }
+            baseRepoURL = URL(string: str) ?? url
+        } else {
+            var str = cleanURLString
+            if !str.hasSuffix("/") { str += "/" }
+            baseRepoURL = URL(string: str) ?? url
+        }
+        
         if let manifest = try? decoder.decode(RepositoryManifestDTO.self, from: data) {
             repoName = manifest.name
             for srcDTO in manifest.sources {
@@ -129,7 +143,7 @@ public final class SourceManager: ObservableObject {
                     if iconStr.lowercased().hasPrefix("http://") || iconStr.lowercased().hasPrefix("https://") {
                         resolvedIconURL = URL(string: iconStr)
                     } else {
-                        resolvedIconURL = URL(string: iconStr, relativeTo: url)?.absoluteURL
+                        resolvedIconURL = URL(string: iconStr, relativeTo: baseRepoURL)?.absoluteURL
                     }
                 }
                 
@@ -165,7 +179,7 @@ public final class SourceManager: ObservableObject {
                     if iconStr.lowercased().hasPrefix("http://") || iconStr.lowercased().hasPrefix("https://") {
                         resolvedIconURL = URL(string: iconStr)
                     } else {
-                        resolvedIconURL = URL(string: iconStr, relativeTo: url)?.absoluteURL
+                        resolvedIconURL = URL(string: iconStr, relativeTo: baseRepoURL)?.absoluteURL
                     }
                 }
                 

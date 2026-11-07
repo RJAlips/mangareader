@@ -38,66 +38,25 @@ public struct DownloadsView: View {
                     .padding(.vertical, 4)
                 }
                 
-                // Active Tasks
-                if !viewModel.activeTasks.isEmpty {
-                    Section("Active Downloads") {
-                        ForEach(viewModel.activeTasks) { task in
-                            downloadTaskRow(task: task)
-                        }
-                    }
-                }
-                
-                // Queued Tasks
-                if !viewModel.queuedTasks.isEmpty {
-                    Section("Queued (\(viewModel.queuedTasks.count))") {
-                        ForEach(viewModel.queuedTasks) { task in
-                            downloadTaskRow(task: task)
-                        }
-                    }
-                }
-                
-                // Completed Tasks
-                if !viewModel.completedTasks.isEmpty {
-                    Section {
-                        ForEach(viewModel.completedTasks) { task in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(task.manga.title)
-                                        .font(.bodyMedium)
-                                        .foregroundColor(.textPrimary)
-                                    Text(task.chapter.displayTitle)
-                                        .font(.captionMedium)
-                                        .foregroundColor(.textSecondary)
-                                }
-                                Spacer()
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.mangaGreen)
+                // Level 1: Manga Title Rows
+                if !viewModel.mangaGroups.isEmpty {
+                    Section("Downloaded Series (\(viewModel.mangaGroups.count))") {
+                        ForEach(viewModel.mangaGroups) { group in
+                            NavigationLink(destination: MangaDownloadDetailView(manga: group.manga, viewModel: viewModel)) {
+                                mangaTitleRow(group: group)
                             }
                         }
-                    } header: {
-                        HStack {
-                            Text("Completed (\(viewModel.completedTasks.count))")
-                            Spacer()
-                            Button("Clear All") {
-                                viewModel.clearCompleted()
-                            }
-                            .font(.captionMedium)
-                            .foregroundColor(.mangaAccent)
-                        }
                     }
-                }
-                
-                // Empty state
-                if viewModel.activeTasks.isEmpty && viewModel.queuedTasks.isEmpty && viewModel.completedTasks.isEmpty {
+                } else {
                     Section {
                         VStack(spacing: Theme.Spacing.md) {
                             Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 40))
+                                .font(.system(size: 42))
                                 .foregroundColor(.textTertiary)
-                            Text("No Download Tasks")
+                            Text("No Downloaded Series")
                                 .font(.sectionTitle)
                                 .foregroundColor(.textPrimary)
-                            Text("Downloaded chapters will be available here for completely offline reading.")
+                            Text("Downloaded chapters and active queues will appear here grouped by title.")
                                 .font(.bodyRegular)
                                 .foregroundColor(.textSecondary)
                                 .multilineTextAlignment(.center)
@@ -112,37 +71,207 @@ public struct DownloadsView: View {
         }
     }
     
-    private func downloadTaskRow(task: DownloadTaskItem) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(task.manga.title)
-                        .font(.bodyEmphasized)
-                        .foregroundColor(.textPrimary)
-                        .lineLimit(1)
-                    
-                    Text(task.chapter.displayTitle)
+    // Level 1: Manga Title Row
+    private func mangaTitleRow(group: MangaDownloadGroup) -> some View {
+        HStack(spacing: Theme.Spacing.md) {
+            AsyncMangaImage(
+                url: group.manga.coverURL,
+                contentMode: .fill,
+                cornerRadius: Theme.CornerRadius.small
+            )
+            .frame(width: 48, height: 68)
+            .clipped()
+            
+            VStack(alignment: .leading, spacing: 5) {
+                Text(group.manga.title)
+                    .font(.bodyEmphasized)
+                    .foregroundColor(.textPrimary)
+                    .lineLimit(1)
+                
+                HStack(spacing: 8) {
+                    Text("\(group.downloadedCount) downloaded")
                         .font(.captionMedium)
                         .foregroundColor(.textSecondary)
+                    
+                    if group.queueCount > 0 {
+                        BadgeView(
+                            text: "\(group.queueCount) in queue",
+                            backgroundColor: Color.mangaAccent.opacity(0.18)
+                        )
+                    }
                 }
+                
+                if let progress = group.activeProgress {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ProgressView(value: progress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
+                        Text(String(format: "Downloading %.0f%%", progress * 100))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.mangaAccent)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Level 2: Manga Download Detail
+
+public struct MangaDownloadDetailView: View {
+    public let manga: MangaItem
+    @ObservedObject public var viewModel: DownloadsViewModel
+    
+    public init(manga: MangaItem, viewModel: DownloadsViewModel) {
+        self.manga = manga
+        self.viewModel = viewModel
+    }
+    
+    public var body: some View {
+        List {
+            // Section 1: In Progress / Queued
+            let inProgress = viewModel.inProgressTasks(for: manga.id)
+            if !inProgress.isEmpty {
+                Section("In Progress / Queued (\(inProgress.count))") {
+                    ForEach(inProgress) { task in
+                        inProgressTaskRow(task: task)
+                    }
+                }
+            }
+            
+            // Section 2: Downloaded Chapters
+            let downloaded = viewModel.downloadedChapters(for: manga.id)
+            Section("Downloaded (\(downloaded.count))") {
+                if downloaded.isEmpty {
+                    Text("No chapters downloaded for this title yet.")
+                        .font(.captionMedium)
+                        .foregroundColor(.textTertiary)
+                } else {
+                    ForEach(downloaded) { chapter in
+                        downloadedChapterRow(chapter: chapter)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    viewModel.deleteChapter(chapter)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                    }
+                }
+            }
+            
+            // Section 3: Not Downloaded
+            let notDownloaded = viewModel.notDownloadedChapters(for: manga.id)
+            if !notDownloaded.isEmpty {
+                Section("Not Downloaded (\(notDownloaded.count))") {
+                    ForEach(notDownloaded) { chapter in
+                        notDownloadedChapterRow(chapter: chapter)
+                    }
+                }
+            }
+        }
+        .listStyle(InsetGroupedListStyle())
+        .navigationTitle(manga.title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    // In Progress / Queued Row
+    private func inProgressTaskRow(task: DownloadTaskItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(task.chapter.displayTitle)
+                    .font(.bodyMedium)
+                    .foregroundColor(.textPrimary)
+                    .lineLimit(1)
                 
                 Spacer()
                 
-                Text(task.status.displayText)
-                    .font(.captionMedium)
-                    .foregroundColor(.mangaAccent)
+                // Pause / Resume
+                if case .downloading = task.status {
+                    Button {
+                        viewModel.pause(task: task)
+                    } label: {
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 13))
+                            .foregroundColor(.mangaAccent)
+                    }
+                    .buttonStyle(.plain)
+                } else if case .paused = task.status {
+                    Button {
+                        viewModel.resume(task: task)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 13))
+                            .foregroundColor(.mangaGreen)
+                    }
+                    .buttonStyle(.plain)
+                }
                 
+                // Cancel
                 Button {
                     viewModel.cancel(task: task)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
                         .foregroundColor(.textTertiary)
                 }
+                .buttonStyle(.plain)
+                .padding(.leading, 6)
             }
             
-            ProgressView(value: task.progress)
-                .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
+            HStack(spacing: 8) {
+                ProgressView(value: task.progress)
+                    .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
+                
+                Text(task.status.displayText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.textSecondary)
+            }
         }
         .padding(.vertical, 4)
+    }
+    
+    // Downloaded Row
+    private func downloadedChapterRow(chapter: ChapterItem) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(chapter.displayTitle)
+                    .font(.bodyMedium)
+                    .foregroundColor(.textPrimary)
+                
+                Text(viewModel.chapterFileSize(chapter, sourceID: manga.sourceID))
+                    .font(.captionMedium)
+                    .foregroundColor(.textSecondary)
+            }
+            
+            Spacer()
+            
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.mangaGreen)
+                .font(.system(size: 16))
+        }
+        .padding(.vertical, 2)
+    }
+    
+    // Not Downloaded Row
+    private func notDownloadedChapterRow(chapter: ChapterItem) -> some View {
+        HStack {
+            Text(chapter.displayTitle)
+                .font(.bodyMedium)
+                .foregroundColor(.textPrimary)
+            
+            Spacer()
+            
+            Button {
+                viewModel.downloadChapter(chapter, for: manga)
+            } label: {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundColor(.mangaAccent)
+                    .font(.system(size: 18))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 2)
     }
 }

@@ -41,6 +41,41 @@ public struct MangaDetailView: View {
         }
         .background(Color.appBackground.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        viewModel.downloadAll()
+                    } label: {
+                        Label("Download All", systemImage: "arrow.down.to.line.compact")
+                    }
+                    
+                    Button {
+                        viewModel.downloadUnread()
+                    } label: {
+                        Label("Download Unread", systemImage: "arrow.down.circle")
+                    }
+                    
+                    Divider()
+                    
+                    Button {
+                        viewModel.cancelDownloads()
+                    } label: {
+                        Label("Cancel Downloads", systemImage: "xmark.circle")
+                    }
+                    
+                    Button(role: .destructive) {
+                        viewModel.deleteDownloaded()
+                    } label: {
+                        Label("Delete Downloaded", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 17))
+                        .foregroundColor(.mangaAccent)
+                }
+            }
+        }
         .fullScreenCover(item: $selectedChapterForReading) { chapter in
             ReaderContainerView(manga: viewModel.manga, chapter: chapter)
         }

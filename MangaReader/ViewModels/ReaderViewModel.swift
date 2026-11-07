@@ -66,8 +66,8 @@ public final class ReaderViewModel: ObservableObject {
         self.isLoadingPages = true
         self.errorMessage = nil
         
-        // 1. Check if downloaded locally
-        if let localPages = downloadManager.localPagesForChapter(chapter), !localPages.isEmpty {
+        // 1. Local-first resolution policy: Check LocalStorageManager
+        if let localPages = LocalStorageManager.shared.getLocalPages(for: chapter, sourceID: manga.sourceID), !localPages.isEmpty {
             self.pages = localPages
             self.isLoadingPages = false
             return
@@ -81,7 +81,7 @@ public final class ReaderViewModel: ObservableObject {
             return
         }
         
-        // 3. Fetch from source provider
+        // 3. Fall back to remote network image loading
         guard let provider = SourceManager.shared.provider(for: manga.sourceID) else {
             self.isLoadingPages = false
             self.errorMessage = "Content source not found."
@@ -111,6 +111,15 @@ public final class ReaderViewModel: ObservableObject {
     public func goToNextChapter() {
         guard let idx = allMangaChapters.firstIndex(where: { $0.id == currentChapter.id }),
               idx < allMangaChapters.count - 1 else { return }
+        
+        // Mark current chapter as completed
+        db.recordReadingProgress(
+            chapter: currentChapter,
+            manga: manga,
+            pageIndex: max(0, pages.count - 1),
+            isComplete: true
+        )
+        
         let nextChapter = allMangaChapters[idx + 1]
         self.currentPageIndex = 0
         loadPages(for: nextChapter)
@@ -128,16 +137,18 @@ public final class ReaderViewModel: ObservableObject {
         guard index >= 0 && index < pages.count else { return }
         self.currentPageIndex = index
         
-        // Persist reading progress
-        db.updateProgress(
-            chapterID: currentChapter.id,
-            mangaID: manga.id,
+        let isLastPage = (index >= pages.count - 1)
+        
+        // Reactive Library & Reading History Sync: Update chapter & manga on MainActor
+        db.recordReadingProgress(
+            chapter: currentChapter,
+            manga: manga,
             pageIndex: index,
-            totalPages: pages.count
+            isComplete: isLastPage
         )
         
         // Sync tracker if at the last page
-        if index >= pages.count - 1 {
+        if isLastPage {
             Task {
                 await trackerManager.syncProgress(
                     mangaID: manga.id,

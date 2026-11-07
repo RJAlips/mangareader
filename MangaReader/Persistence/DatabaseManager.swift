@@ -241,6 +241,55 @@ public final class DatabaseManager: ObservableObject {
     
     // MARK: - Reading Progress
     
+    @MainActor
+    public func recordReadingProgress(
+        chapter: ChapterItem,
+        manga: MangaItem,
+        pageIndex: Int,
+        isComplete: Bool = false
+    ) {
+        let isFinished = isComplete || (chapter.pageCount > 0 && pageIndex >= chapter.pageCount - 1)
+        
+        // 1. Update Chapter in memory
+        if let chIdx = chaptersList.firstIndex(where: { $0.id == chapter.id }) {
+            chaptersList[chIdx].lastPageRead = pageIndex
+            chaptersList[chIdx].lastReadPage = pageIndex
+            if isFinished {
+                chaptersList[chIdx].isRead = true
+            }
+        }
+        
+        // 2. Update Manga in memory with reactive timestamp and chapter link
+        if let mIdx = mangaList.firstIndex(where: { $0.id == manga.id }) {
+            let now = Date()
+            mangaList[mIdx].lastReadAt = now
+            mangaList[mIdx].lastReadDate = now
+            mangaList[mIdx].lastReadChapterID = chapter.id
+            mangaList[mIdx].lastReadChapterNumber = chapter.chapterNumber
+            mangaList[mIdx].lastReadChapterTitle = chapter.displayTitle
+        }
+        
+        // 3. Update Progress History
+        let progress = ReadingProgress(
+            chapterID: chapter.id,
+            mangaID: manga.id,
+            pageIndex: pageIndex,
+            totalPages: max(chapter.pageCount, 1)
+        )
+        if let idx = historyList.firstIndex(where: { $0.chapterID == chapter.id }) {
+            historyList[idx] = progress
+        } else {
+            historyList.append(progress)
+        }
+        
+        recalculateUnreadCounts(for: manga.id)
+        
+        // Synchronous main thread save to disk
+        saveHistoryToDisk()
+        saveChaptersToDisk()
+        saveMangaToDisk()
+    }
+    
     public func updateProgress(chapterID: UUID, mangaID: UUID, pageIndex: Int, totalPages: Int) {
         let progress = ReadingProgress(chapterID: chapterID, mangaID: mangaID, pageIndex: pageIndex, totalPages: totalPages)
         if let index = historyList.firstIndex(where: { $0.chapterID == chapterID }) {
@@ -252,19 +301,24 @@ public final class DatabaseManager: ObservableObject {
         // Update chapter lastPageRead
         if let chIdx = chaptersList.firstIndex(where: { $0.id == chapterID }) {
             chaptersList[chIdx].lastPageRead = pageIndex
+            chaptersList[chIdx].lastReadPage = pageIndex
             if pageIndex >= max(0, totalPages - 1) {
                 chaptersList[chIdx].isRead = true
             }
         }
         
-        // Update manga lastReadAt
+        // Update manga lastReadAt and lastReadDate
         if let mIdx = mangaList.firstIndex(where: { $0.id == mangaID }) {
-            mangaList[mIdx].lastReadAt = Date()
+            let now = Date()
+            mangaList[mIdx].lastReadAt = now
+            mangaList[mIdx].lastReadDate = now
+            mangaList[mIdx].lastReadChapterID = chapterID
         }
         
         recalculateUnreadCounts(for: mangaID)
         saveHistoryToDisk()
         saveChaptersToDisk()
+        saveMangaToDisk()
     }
     
     public func progress(for chapterID: UUID) -> ReadingProgress? {

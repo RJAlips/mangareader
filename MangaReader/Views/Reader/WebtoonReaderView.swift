@@ -21,12 +21,20 @@ public struct WebtoonReaderView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: viewModel.settings.pageSpacing) {
                     ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, url in
-                        AsyncMangaImage(
-                            url: url,
-                            contentMode: contentModeForScale(viewModel.settings.imageScale),
-                            cornerRadius: 0,
-                            showShimmer: true
-                        )
+                        Group {
+                            if url.isFileURL, let localImg = LocalStorageManager.shared.getLocalImage(for: url) {
+                                Image(uiImage: localImg)
+                                    .resizable()
+                                    .aspectRatio(contentMode: contentModeForScale(viewModel.settings.imageScale))
+                            } else {
+                                AsyncMangaImage(
+                                    url: url,
+                                    contentMode: contentModeForScale(viewModel.settings.imageScale),
+                                    cornerRadius: 0,
+                                    showShimmer: true
+                                )
+                            }
+                        }
                         .id(index)
                         .onAppear {
                             viewModel.onPageChanged(to: index)

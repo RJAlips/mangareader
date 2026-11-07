@@ -14,6 +14,7 @@ public struct AsyncMangaImage: View {
     private let contentMode: ContentMode
     private let cornerRadius: CGFloat
     private let showShimmer: Bool
+    private let customHeaders: [String: String]?
     
     @State private var loadedImage: UIImage? = nil
     @State private var isLoading: Bool = false
@@ -23,24 +24,27 @@ public struct AsyncMangaImage: View {
         url: URL?,
         contentMode: ContentMode = .fill,
         cornerRadius: CGFloat = Theme.CornerRadius.medium,
-        showShimmer: Bool = true
+        showShimmer: Bool = true,
+        headers: [String: String]? = nil
     ) {
         self.url = url
         self.contentMode = contentMode
         self.cornerRadius = cornerRadius
         self.showShimmer = showShimmer
+        self.customHeaders = headers
     }
     
     public init(
         urlString: String?,
         contentMode: ContentMode = .fill,
         cornerRadius: CGFloat = Theme.CornerRadius.medium,
-        showShimmer: Bool = true
+        showShimmer: Bool = true,
+        headers: [String: String]? = nil
     ) {
         if let string = urlString, let parsed = URL(string: string) {
-            self.init(url: parsed, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer)
+            self.init(url: parsed, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
         } else {
-            self.init(url: nil, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer)
+            self.init(url: nil, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
         }
     }
     
@@ -91,9 +95,9 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 1. Check local file if file:// scheme
+        // 1. Check local file if file:// scheme (local-first rendering)
         if url.isFileURL {
-            if let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
+            if let img = UIImage(contentsOfFile: url.path) ?? (try? Data(contentsOf: url)).flatMap({ UIImage(data: $0) }) {
                 self.loadedImage = img
                 return
             }
@@ -105,12 +109,28 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 3. Remote Download with fallback
+        // 3. Remote Download with fallback & custom CDN headers
         isLoading = true
         hasFailed = false
         
+        // Build request headers with Referer & Safari User-Agent
+        var requestHeaders: [String: String] = customHeaders ?? [:]
+        let host = url.host?.lowercased() ?? ""
+        if host.contains("mangadex.org") {
+            if requestHeaders["User-Agent"] == nil {
+                requestHeaders["User-Agent"] = "MangaReader/1.0.0 (iOS; Apple; CFNetwork)"
+            }
+        } else {
+            if requestHeaders["User-Agent"] == nil {
+                requestHeaders["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+            }
+            if requestHeaders["Referer"] == nil && !host.isEmpty {
+                requestHeaders["Referer"] = "https://\(host)/"
+            }
+        }
+        
         do {
-            let data = try await NetworkClient.shared.fetchData(from: url)
+            let data = try await NetworkClient.shared.fetchData(from: url, headers: requestHeaders)
             guard let image = UIImage(data: data) else {
                 hasFailed = true
                 isLoading = false
@@ -126,7 +146,7 @@ public struct AsyncMangaImage: View {
                 let base = String(url.absoluteString.dropLast(8))
                 let candidateURLs = ["\(base).256.jpg", base].compactMap { URL(string: $0) }
                 for fallbackURL in candidateURLs {
-                    if let data = try? await NetworkClient.shared.fetchData(from: fallbackURL),
+                    if let data = try? await NetworkClient.shared.fetchData(from: fallbackURL, headers: requestHeaders),
                        let image = UIImage(data: data) {
                         await ImageCacheManager.shared.insert(image, for: url, data: data)
                         self.loadedImage = image

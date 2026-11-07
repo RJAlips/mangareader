@@ -85,13 +85,20 @@ public struct PagedReaderView: View {
     @ViewBuilder
     private func pageContent(for url: URL) -> some View {
         ZStack {
-            AsyncMangaImage(
-                url: url,
-                contentMode: .fit,
-                cornerRadius: 0,
-                showShimmer: true
-            )
-            .padding(.horizontal, viewModel.settings.sidePadding)
+            if url.isFileURL, let localImg = LocalStorageManager.shared.getLocalImage(for: url) {
+                Image(uiImage: localImg)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .padding(.horizontal, viewModel.settings.sidePadding)
+            } else {
+                AsyncMangaImage(
+                    url: url,
+                    contentMode: .fit,
+                    cornerRadius: 0,
+                    showShimmer: true
+                )
+                .padding(.horizontal, viewModel.settings.sidePadding)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

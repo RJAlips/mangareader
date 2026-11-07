@@ -20,6 +20,10 @@ public struct ChapterItem: Identifiable, Codable, Hashable {
     public var pageURLs: [URL]
     public var isRead: Bool
     public var lastPageRead: Int
+    public var lastReadPage: Int {
+        get { lastPageRead }
+        set { lastPageRead = newValue }
+    }
     public var isDownloaded: Bool
     public var downloadProgress: Double
     public var localDirectoryPath: String?

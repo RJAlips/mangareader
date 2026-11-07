@@ -111,9 +111,26 @@ public final class MangaDetailViewModel: ObservableObject {
         downloadManager.downloadChapter(chapter, for: manga)
     }
     
-    public func downloadAllUnread() {
+    public func downloadAll() {
+        let notDownloaded = chapters.filter { !$0.isDownloaded }
+        downloadManager.enqueue(chapters: notDownloaded, for: manga)
+    }
+    
+    public func downloadUnread() {
         let unread = chapters.filter { !$0.isRead && !$0.isDownloaded }
-        downloadManager.downloadChapters(unread, for: manga)
+        downloadManager.enqueue(chapters: unread, for: manga)
+    }
+    
+    public func downloadAllUnread() {
+        downloadUnread()
+    }
+    
+    public func cancelDownloads() {
+        downloadManager.cancelDownloads(for: manga.id)
+    }
+    
+    public func deleteDownloaded() {
+        downloadManager.deleteDownloadedChapters(for: manga.id)
     }
     
     public func deleteDownload(_ chapter: ChapterItem) {
