@@ -216,14 +216,19 @@ public struct RepositoryManagementSheet: View {
                 // Community Presets (1-Tap Add)
                 Section("Popular Community Presets") {
                     presetRow(
-                        name: "Official MangaDex Mirror",
+                        name: "Official MangaDex",
                         url: "https://api.mangadex.org",
-                        desc: "Official REST API v5 endpoint"
+                        desc: "Enable official MangaDex REST API v5 provider"
+                    )
+                    presetRow(
+                        name: "Aidoku Community Sources",
+                        url: "https://aidoku-community.github.io/sources/index.min.json",
+                        desc: "Standard community index with 100+ sources"
                     )
                     presetRow(
                         name: "Open Community Manga Index",
                         url: "https://raw.githubusercontent.com/RJAlips/mangareader/main/community_repo.json",
-                        desc: "Community curated manga feeds"
+                        desc: "Curated community manga feeds"
                     )
                 }
                 

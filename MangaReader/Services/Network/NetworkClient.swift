@@ -38,8 +38,8 @@ public actor NetworkClient {
         config.timeoutIntervalForRequest = 25
         config.timeoutIntervalForResource = 60
         config.httpAdditionalHeaders = [
-            "Accept": "application/json,image/*,*/*",
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+            "Accept": "application/json,image/webp,image/png,image/jpeg,image/*,*/*;q=0.8",
+            "User-Agent": defaultUserAgent
         ]
         self.session = URLSession(configuration: config)
     }

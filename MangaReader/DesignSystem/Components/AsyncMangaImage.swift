@@ -105,14 +105,12 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 3. Remote Download with headers and fallback
+        // 3. Remote Download with fallback
         isLoading = true
         hasFailed = false
         
-        let headers = ["Referer": "https://mangadex.org"]
-        
         do {
-            let data = try await NetworkClient.shared.fetchData(from: url, headers: headers)
+            let data = try await NetworkClient.shared.fetchData(from: url)
             guard let image = UIImage(data: data) else {
                 hasFailed = true
                 isLoading = false
@@ -123,16 +121,18 @@ public struct AsyncMangaImage: View {
             self.loadedImage = image
             self.isLoading = false
         } catch {
-            // Fallback: if .512.jpg failed, try downloading original or .256.jpg
+            // Fallback: if .512.jpg failed, try .256.jpg or original
             if url.absoluteString.hasSuffix(".512.jpg") {
-                let originalString = String(url.absoluteString.dropLast(8))
-                if let fallbackURL = URL(string: originalString),
-                   let data = try? await NetworkClient.shared.fetchData(from: fallbackURL, headers: headers),
-                   let image = UIImage(data: data) {
-                    await ImageCacheManager.shared.insert(image, for: url, data: data)
-                    self.loadedImage = image
-                    self.isLoading = false
-                    return
+                let base = String(url.absoluteString.dropLast(8))
+                let candidateURLs = ["\(base).256.jpg", base].compactMap { URL(string: $0) }
+                for fallbackURL in candidateURLs {
+                    if let data = try? await NetworkClient.shared.fetchData(from: fallbackURL),
+                       let image = UIImage(data: data) {
+                        await ImageCacheManager.shared.insert(image, for: url, data: data)
+                        self.loadedImage = image
+                        self.isLoading = false
+                        return
+                    }
                 }
             }
             

@@ -113,7 +113,16 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
     }
     
     private func parseManga(entry: MangaDexEntry) -> MangaItem? {
-        let title = entry.attributes.title["en"] ?? entry.attributes.title.values.first ?? "Untitled Manga"
+        var resolvedTitle = entry.attributes.title["en"]
+        if resolvedTitle == nil, let altList = entry.attributes.altTitles {
+            for alt in altList {
+                if let en = alt["en"], !en.trimmingCharacters(in: .whitespaces).isEmpty {
+                    resolvedTitle = en
+                    break
+                }
+            }
+        }
+        let finalTitle = resolvedTitle ?? entry.attributes.title.values.first ?? "Untitled Manga"
         let desc = entry.attributes.description?["en"] ?? entry.attributes.description?.values.first
         
         var coverFile: String? = nil
@@ -137,7 +146,7 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
         return MangaItem(
             sourceID: manifest.id,
             urlOrSlug: entry.id,
-            title: title,
+            title: finalTitle,
             alternativeTitles: [],
             author: authorName,
             artist: authorName,
@@ -170,6 +179,7 @@ private struct MangaDexEntry: Decodable {
 
 private struct MangaDexAttributes: Decodable {
     let title: [String: String]
+    let altTitles: [[String: String]]?
     let description: [String: String]?
     let status: String?
     let tags: [MangaDexTag]
