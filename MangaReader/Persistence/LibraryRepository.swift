@@ -29,7 +29,9 @@ public final class LibraryRepository: ObservableObject {
     private init() {
         db.$mangaList
             .map { list in list.filter { $0.inLibrary } }
-            .assign(to: \.libraryItems, on: self)
+            .sink { [weak self] items in
+                self?.libraryItems = items
+            }
             .store(in: &cancellables)
     }
     

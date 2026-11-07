@@ -20,7 +20,9 @@ public final class BrowseViewModel: ObservableObject {
     
     public init() {
         sourceManager.$sources
-            .assign(to: \.sources, on: self)
+            .sink { [weak self] sources in
+                self?.sources = sources
+            }
             .store(in: &cancellables)
     }
     

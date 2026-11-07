@@ -22,7 +22,7 @@ public struct SettingsView: View {
                             Text(mode.rawValue).tag(mode)
                         }
                     }
-                    .onChange(of: viewModel.readerSettings.defaultReadingMode) { _ in
+                    .onChange(of: viewModel.readerSettings.defaultReadingMode) {
                         viewModel.updateSettings()
                     }
                     
@@ -31,13 +31,13 @@ public struct SettingsView: View {
                             Text(bg.rawValue).tag(bg)
                         }
                     }
-                    .onChange(of: viewModel.readerSettings.backgroundColor) { _ in
+                    .onChange(of: viewModel.readerSettings.backgroundColor) {
                         viewModel.updateSettings()
                     }
                     
                     Toggle("Keep Screen Awake While Reading", isOn: $viewModel.readerSettings.keepScreenAwake)
                         .tint(.mangaAccent)
-                        .onChange(of: viewModel.readerSettings.keepScreenAwake) { _ in
+                        .onChange(of: viewModel.readerSettings.keepScreenAwake) {
                             viewModel.updateSettings()
                         }
                 }

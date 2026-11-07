@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import UIKit
 
 public struct AsyncMangaImage: View {
     private let url: URL?

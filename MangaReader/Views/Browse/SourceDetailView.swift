@@ -41,7 +41,7 @@ public struct SourceDetailView: View {
             .pickerStyle(SegmentedPickerStyle())
             .padding(.horizontal, Theme.Spacing.lg)
             .padding(.vertical, Theme.Spacing.sm)
-            .onChange(of: selectedTab) { _ in
+            .onChange(of: selectedTab) {
                 currentPage = 1
                 loadData()
             }

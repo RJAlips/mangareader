@@ -29,7 +29,7 @@ public enum AppTab: String, CaseIterable, Identifiable {
 
 public struct MainTabView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var selectedTab: AppTab = .home
+    @State private var selectedTab: AppTab? = .home
     
     public init() {}
     
@@ -47,11 +47,14 @@ public struct MainTabView: View {
                     .listStyle(SidebarListStyle())
                     .navigationTitle("MangaReader")
                 } detail: {
-                    tabContent(for: selectedTab)
+                    tabContent(for: selectedTab ?? .home)
                 }
             } else {
                 // iPhone Native Tab Bar Layout
-                TabView(selection: $selectedTab) {
+                TabView(selection: Binding(
+                    get: { selectedTab ?? .home },
+                    set: { selectedTab = $0 }
+                )) {
                     HomeView()
                         .tabItem {
                             Label(AppTab.home.rawValue, systemImage: AppTab.home.iconName)

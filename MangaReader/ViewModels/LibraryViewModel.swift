@@ -45,7 +45,9 @@ public final class LibraryViewModel: ObservableObject {
     
     public init() {
         db.$categoriesList
-            .assign(to: \.categories, on: self)
+            .sink { [weak self] cats in
+                self?.categories = cats
+            }
             .store(in: &cancellables)
     }
     

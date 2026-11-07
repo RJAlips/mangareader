@@ -8,6 +8,7 @@
 import SwiftUI
 
 @main
+@MainActor
 struct MangaReaderApp: App {
     @StateObject private var appState = AppState.shared
     @StateObject private var db = DatabaseManager.shared

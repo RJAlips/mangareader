@@ -32,7 +32,9 @@ public final class HomeViewModel: ObservableObject {
     
     private func setupSubscriptions() {
         historyRepo.$continueReadingItems
-            .assign(to: \.continueReading, on: self)
+            .sink { [weak self] items in
+                self?.continueReading = items
+            }
             .store(in: &cancellables)
         
         db.$mangaList

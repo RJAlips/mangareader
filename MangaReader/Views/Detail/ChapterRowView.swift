@@ -80,13 +80,10 @@ public struct ChapterRowView: View {
                         .foregroundColor(.mangaGreen)
                 }
             } else if chapter.downloadProgress > 0 && chapter.downloadProgress < 1.0 {
-                ZStack {
-                    CircularProgressViewStyle(tint: .mangaAccent)
-                    ProgressView(value: chapter.downloadProgress)
-                        .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
-                        .scaleEffect(0.7)
-                }
-                .frame(width: 24, height: 24)
+                ProgressView(value: chapter.downloadProgress)
+                    .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                    .scaleEffect(0.7)
+                    .frame(width: 24, height: 24)
             } else {
                 Button(action: onDownload) {
                     Image(systemName: "arrow.down.circle")

@@ -14,6 +14,7 @@ jobs:
 
       - name: Build App
         run: |
+          set -o pipefail
           xcodebuild -project MangaReader.xcodeproj \
                      -scheme MangaReader \
                      -configuration Release \
@@ -23,17 +24,32 @@ jobs:
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGN_ENTITLEMENTS="" \
-                     build
+                     build 2>&1 | tee xcodebuild.log
+
+      - name: Report Build Errors on Failure
+        if: failure()
+        run: |
+          echo "### ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
+          if [ -f xcodebuild.log ]; then
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            grep -E "(error:|fatal error:|BUILD FAILED)" xcodebuild.log | head -n 50 >> $GITHUB_STEP_SUMMARY || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Package Payload into IPA
+        if: success()
         run: |
           mkdir -p Payload
-          APP_PATH=$(find build -name "MangaReader.app" -type d | head -n 1)
+          APP_PATH=$(find build/Build/Products -name "MangaReader.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build -name "MangaReader.app" -type d | head -n 1)
+          fi
           echo "Found app at: $APP_PATH"
           cp -r "$APP_PATH" Payload/
           zip -r MangaReader.ipa Payload/
 
       - name: Upload IPA Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MangaReader-unsigned-ipa

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 public struct BackupRestoreView: View {
     @ObservedObject public var viewModel: SettingsViewModel

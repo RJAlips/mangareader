@@ -120,9 +120,9 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
         var authorName: String? = nil
         
         for rel in entry.relationships {
-            if rel.type == "cover_art", let filename = rel.attributes?["fileName"] as? String {
+            if rel.type == "cover_art", let filename = rel.attributes?.fileName {
                 coverFile = filename
-            } else if rel.type == "author", let name = rel.attributes?["name"] as? String {
+            } else if rel.type == "author", let name = rel.attributes?.name {
                 authorName = name
             }
         }
@@ -186,7 +186,12 @@ private struct MangaDexTagName: Decodable {
 private struct MangaDexRelationship: Decodable {
     let id: String
     let type: String
-    let attributes: [String: AnyCodable]?
+    let attributes: MangaDexRelationshipAttributes?
+}
+
+private struct MangaDexRelationshipAttributes: Decodable {
+    let fileName: String?
+    let name: String?
 }
 
 private struct MangaDexChapterFeedResponse: Decodable {
@@ -215,22 +220,4 @@ private struct MangaDexAtHomeChapter: Decodable {
     let data: [String]
 }
 
-// AnyCodable helper for dynamic attributes
-private struct AnyCodable: Decodable {
-    let value: Any
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let string = try? container.decode(String.self) {
-            value = string
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else {
-            value = ""
-        }
-    }
-}
+

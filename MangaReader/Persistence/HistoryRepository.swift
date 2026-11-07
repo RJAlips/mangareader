@@ -40,7 +40,9 @@ public final class HistoryRepository: ObservableObject {
                 }
                 return results
             }
-            .assign(to: \.continueReadingItems, on: self)
+            .sink { [weak self] items in
+                self?.continueReadingItems = items
+            }
             .store(in: &cancellables)
     }
     

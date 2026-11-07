@@ -27,12 +27,16 @@ public final class MangaDetailViewModel: ObservableObject {
         // Listen to database updates for this manga and its chapters
         db.$mangaList
             .compactMap { list in list.first(where: { $0.id == manga.id }) }
-            .assign(to: \.manga, on: self)
+            .sink { [weak self] item in
+                self?.manga = item
+            }
             .store(in: &cancellables)
         
         db.$chaptersList
             .map { list in list.filter { $0.mangaID == manga.id } }
-            .assign(to: \.chapters, on: self)
+            .sink { [weak self] chs in
+                self?.chapters = chs
+            }
             .store(in: &cancellables)
         
         loadChapters()
