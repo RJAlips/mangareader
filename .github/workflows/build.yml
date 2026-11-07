@@ -17,17 +17,20 @@ jobs:
           xcodebuild -project MangaReader.xcodeproj \
                      -scheme MangaReader \
                      -configuration Release \
-                     -destination 'generic/platform=iOS' \
-                     -archivePath build/MangaReader.xcarchive \
-                     CODE_SIGN_IDENTITY="" \
-                     CODE_SIGNING_REQUIRED=NO \
+                     -sdk iphoneos \
+                     -derivedDataPath build \
                      CODE_SIGNING_ALLOWED=NO \
-                     archive
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGN_ENTITLEMENTS="" \
+                     build
 
       - name: Package Payload into IPA
         run: |
           mkdir -p Payload
-          cp -r build/MangaReader.xcarchive/Products/Applications/MangaReader.app Payload/
+          APP_PATH=$(find build -name "MangaReader.app" -type d | head -n 1)
+          echo "Found app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
           zip -r MangaReader.ipa Payload/
 
       - name: Upload IPA Artifact
