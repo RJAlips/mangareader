@@ -1,0 +1,17 @@
+{
+  "name": "MangaReader Community Index",
+  "sources": [
+    {
+      "id": "com.mangareader.source.community.mangadex",
+      "name": "MangaDex (Community Feed)",
+      "version": "1.0.0",
+      "lang": "Multi",
+      "iconURL": "https://mangadex.org/favicon.ico",
+      "description": "Global community manga translations via MangaDex network",
+      "popularURL": null,
+      "latestURL": null,
+      "searchURL": null,
+      "chaptersURL": null
+    }
+  ]
+}

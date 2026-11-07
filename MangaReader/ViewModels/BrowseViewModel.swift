@@ -11,6 +11,7 @@ import Combine
 @MainActor
 public final class BrowseViewModel: ObservableObject {
     @Published public private(set) var sources: [any MangaSource] = []
+    @Published public private(set) var repositories: [RepositoryInfo] = []
     @Published public var globalQuery: String = ""
     @Published public private(set) var isSearching: Bool = false
     @Published public private(set) var globalSearchResults: [String: [MangaItem]] = [:]
@@ -22,6 +23,12 @@ public final class BrowseViewModel: ObservableObject {
         sourceManager.$sources
             .sink { [weak self] sources in
                 self?.sources = sources
+            }
+            .store(in: &cancellables)
+        
+        sourceManager.$repositories
+            .sink { [weak self] repos in
+                self?.repositories = repos
             }
             .store(in: &cancellables)
     }
@@ -53,5 +60,13 @@ public final class BrowseViewModel: ObservableObject {
         globalQuery = ""
         globalSearchResults = [:]
         isSearching = false
+    }
+    
+    public func addRepository(url: String) async throws -> Int {
+        try await sourceManager.addRepository(urlString: url)
+    }
+    
+    public func removeRepository(url: String) {
+        sourceManager.removeRepository(url: url)
     }
 }

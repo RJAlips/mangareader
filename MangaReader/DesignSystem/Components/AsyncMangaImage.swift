@@ -105,14 +105,15 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 3. Remote Download
+        // 3. Remote Download with headers and fallback
         isLoading = true
         hasFailed = false
         
+        let headers = ["Referer": "https://mangadex.org"]
+        
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode),
-                  let image = UIImage(data: data) else {
+            let data = try await NetworkClient.shared.fetchData(from: url, headers: headers)
+            guard let image = UIImage(data: data) else {
                 hasFailed = true
                 isLoading = false
                 return
@@ -122,6 +123,19 @@ public struct AsyncMangaImage: View {
             self.loadedImage = image
             self.isLoading = false
         } catch {
+            // Fallback: if .512.jpg failed, try downloading original or .256.jpg
+            if url.absoluteString.hasSuffix(".512.jpg") {
+                let originalString = String(url.absoluteString.dropLast(8))
+                if let fallbackURL = URL(string: originalString),
+                   let data = try? await NetworkClient.shared.fetchData(from: fallbackURL, headers: headers),
+                   let image = UIImage(data: data) {
+                    await ImageCacheManager.shared.insert(image, for: url, data: data)
+                    self.loadedImage = image
+                    self.isLoading = false
+                    return
+                }
+            }
+            
             if !Task.isCancelled {
                 self.hasFailed = true
                 self.isLoading = false
