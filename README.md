@@ -5,9 +5,6 @@
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-purple.svg)](https://developer.apple.com/xcode/swiftui/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**MangaReader** is a production-quality, native iOS application designed for reading **Manga, Manhwa, Manhua, Webtoons, and Western Comics** on iPhone and iPad.
-
-It combines the feature richness and deep library management of **[Mihon](https://github.com/mihonapp/mihon)** (Android) with the elegant, native iOS aesthetic and fluid gesture design of **[Tachimanga](https://github.com/tachimanga/tachimanga)**, built strictly following Apple's **Human Interface Guidelines (HIG)**.
 
 ---
 
