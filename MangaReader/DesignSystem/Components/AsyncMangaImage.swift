@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Combine
 import UIKit
 
 public struct AsyncMangaImage: View {
@@ -21,6 +20,7 @@ public struct AsyncMangaImage: View {
     @State private var loadedImage: UIImage? = nil
     @State private var isLoading: Bool = false
     @State private var hasFailed: Bool = false
+    @State private var reloadID = UUID()
 
     public init(
         url: URL?,
@@ -64,10 +64,15 @@ public struct AsyncMangaImage: View {
                         Image(systemName: "photo.badge.exclamationmark")
                             .font(.system(size: 24))
                             .foregroundColor(.textTertiary)
-                        Text("Unavailable")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.textTertiary)
+                        Text("Retry")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.mangaAccent)
                     }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    hasFailed = false
+                    reloadID = UUID()
                 }
             } else {
                 ZStack {
@@ -85,7 +90,7 @@ public struct AsyncMangaImage: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .task(id: url) {
+        .task(id: "\(url?.absoluteString ?? "")_\(reloadID)") {
             await loadImage()
         }
     }
@@ -97,9 +102,10 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 1. Check local file if file:// scheme (local-first rendering)
-        if url.isFileURL {
-            if let img = UIImage(contentsOfFile: url.path) ?? (try? Data(contentsOf: url)).flatMap({ UIImage(data: $0) }) {
+        // 1. Check local file if file:// scheme or Documents/Downloads (local-first rendering)
+        if url.isFileURL || url.scheme == "file" || url.path.contains("Downloads/") {
+            let path = url.isFileURL ? url.path : url.absoluteString
+            if let img = UIImage(contentsOfFile: path) ?? (try? Data(contentsOf: url)).flatMap({ UIImage(data: $0) }) {
                 self.loadedImage = img
                 return
             }
@@ -111,9 +117,14 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 3. Remote Download with fallback & custom CDN headers
+        // 3. Remote Download with task concurrency limiter & custom CDN headers
         isLoading = true
         hasFailed = false
+
+        await ImageDownloadLimiter.shared.acquire()
+        defer {
+            Task { await ImageDownloadLimiter.shared.release() }
+        }
 
         do {
             let data = try await NetworkClient.shared.fetchDataWithCDNHeaders(from: url, headers: customHeaders)

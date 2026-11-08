@@ -7,6 +7,8 @@
 
 import Foundation
 
+public typealias MangaSourceProtocol = MangaSource
+
 public protocol MangaSource: AnyObject, Sendable {
     var manifest: SourceManifest { get }
     

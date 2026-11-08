@@ -19,6 +19,13 @@ public struct SourceDetailView: View {
         GridItem(.adaptive(minimum: 105, maximum: 140), spacing: Theme.Spacing.md, alignment: .top)
     ]
     
+    private var sourceBaseURL: URL? {
+        if let community = source as? CommunityWebSource {
+            return URL(string: community.baseURLString)
+        }
+        return URL(string: "https://api.mangadex.org")
+    }
+    
     public init(source: any MangaSource) {
         self.source = source
     }
@@ -30,7 +37,7 @@ public struct SourceDetailView: View {
                 .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.top, Theme.Spacing.sm)
                 .onSubmit {
-                    performSearch()
+                    Task { await performSearch() }
                 }
             
             // Tab Picker
@@ -43,21 +50,61 @@ public struct SourceDetailView: View {
             .padding(.vertical, Theme.Spacing.sm)
             .onChange(of: selectedTab) {
                 currentPage = 1
-                loadData()
+                Task {
+                    await loadData()
+                }
             }
             
-            // Grid Content
+            // Content
             if isLoading && items.isEmpty {
                 Spacer()
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                        .scaleEffect(1.3)
+                    Text("Loading \(source.manifest.name)...")
+                        .font(.captionMedium)
+                        .foregroundColor(.textSecondary)
+                }
+                Spacer()
+            } else if !isLoading && items.isEmpty {
+                Spacer()
+                VStack(spacing: 14) {
+                    Image(systemName: "books.vertical")
+                        .font(.system(size: 44))
+                        .foregroundColor(.textTertiary)
+                    Text("No Titles Available")
+                        .font(.sectionTitle)
+                        .foregroundColor(.textPrimary)
+                    Text("Check your connection or try another source.")
+                        .font(.captionMedium)
+                        .foregroundColor(.textSecondary)
+                    Button {
+                        Task { await loadData() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Retry")
+                        }
+                        .font(.bodyMedium)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.mangaAccent)
+                        .cornerRadius(Theme.CornerRadius.small)
+                    }
+                }
                 Spacer()
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: Theme.Spacing.md) {
                         ForEach(items) { manga in
                             NavigationLink(destination: MangaDetailView(manga: manga)) {
-                                MangaCardView(manga: manga, showUnreadBadge: false)
+                                MangaCardView(
+                                    manga: manga,
+                                    baseURL: sourceBaseURL,
+                                    showUnreadBadge: false
+                                )
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
@@ -69,45 +116,44 @@ public struct SourceDetailView: View {
         .background(Color.appBackground.ignoresSafeArea())
         .navigationTitle(source.manifest.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
+        .task {
             if items.isEmpty {
-                loadData()
+                await loadData()
             }
         }
     }
     
-    private func loadData() {
+    @MainActor
+    private func loadData() async {
         isLoading = true
-        Task {
-            do {
-                let result: [MangaItem]
-                if selectedTab == 0 {
-                    result = try await source.fetchPopular(page: currentPage)
-                } else {
-                    result = try await source.fetchLatest(page: currentPage)
-                }
-                self.items = result
-                self.isLoading = false
-            } catch {
-                self.isLoading = false
+        do {
+            let result: [MangaItem]
+            if selectedTab == 0 {
+                result = try await source.fetchPopular(page: currentPage)
+            } else {
+                result = try await source.fetchLatest(page: currentPage)
             }
+            self.items = result
+        } catch {
+            // Keep existing items if reload fails
         }
+        self.isLoading = false
     }
     
-    private func performSearch() {
-        guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            loadData()
+    @MainActor
+    private func performSearch() async {
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            await loadData()
             return
         }
         isLoading = true
-        Task {
-            do {
-                let results = try await source.search(query: searchQuery, page: 1)
-                self.items = results
-                self.isLoading = false
-            } catch {
-                self.isLoading = false
-            }
+        do {
+            let results = try await source.search(query: trimmed, page: 1)
+            self.items = results
+        } catch {
+            // Error handling
         }
+        self.isLoading = false
     }
 }

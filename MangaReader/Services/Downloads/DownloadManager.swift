@@ -104,11 +104,13 @@ public final class DownloadManager: ObservableObject {
     @Published public private(set) var tasks: [DownloadTaskItem] = []
     @Published public var wifiOnly: Bool = false
     @Published public var isConnectedToWifi: Bool = true
+    @Published public private(set) var totalDownloadedSize: Int64 = 0
     
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.mangareader.networkmonitor")
     private let fileManager = FileManager.default
     private var isProcessingQueue: Bool = false
+    private var activeDownloadTask: Task<Void, Never>? = nil
     
     private init() {
         // Ensure root Downloads directory exists
@@ -116,6 +118,7 @@ public final class DownloadManager: ObservableObject {
         try? fileManager.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
         
         startNetworkMonitoring()
+        updateTotalStorageUsage()
     }
     
     private func startNetworkMonitoring() {
@@ -161,7 +164,17 @@ public final class DownloadManager: ObservableObject {
     
     public func pauseTask(chapterID: UUID) {
         if let idx = tasks.firstIndex(where: { $0.chapter.id == chapterID }) {
+            let wasDownloading: Bool = {
+                if case .downloading = tasks[idx].status { return true }
+                return false
+            }()
             tasks[idx].status = .paused
+            if wasDownloading {
+                activeDownloadTask?.cancel()
+                activeDownloadTask = nil
+                isProcessingQueue = false
+                resumeProcessingQueue()
+            }
         }
     }
     
@@ -173,11 +186,26 @@ public final class DownloadManager: ObservableObject {
     }
     
     public func cancelTask(chapterID: UUID) {
-        tasks.removeAll(where: { $0.chapter.id == chapterID })
+        if let idx = tasks.firstIndex(where: { $0.chapter.id == chapterID }) {
+            let wasDownloading: Bool = {
+                if case .downloading = tasks[idx].status { return true }
+                return false
+            }()
+            tasks.remove(at: idx)
+            if wasDownloading {
+                activeDownloadTask?.cancel()
+                activeDownloadTask = nil
+                isProcessingQueue = false
+                resumeProcessingQueue()
+            }
+        }
     }
     
     public func cancelDownloads(for mangaID: UUID) {
-        tasks.removeAll(where: { $0.manga.id == mangaID })
+        let matches = tasks.filter { $0.manga.id == mangaID }
+        for match in matches {
+            cancelTask(chapterID: match.chapter.id)
+        }
     }
     
     public func clearCompleted() {
@@ -207,6 +235,7 @@ public final class DownloadManager: ObservableObject {
         }
         
         tasks.removeAll(where: { $0.chapter.id == chapter.id })
+        updateTotalStorageUsage()
     }
     
     public func deleteDownloadedChapters(for mangaID: UUID) {
@@ -228,9 +257,10 @@ public final class DownloadManager: ObservableObject {
         isProcessingQueue = true
         let task = tasks[nextIndex]
         
-        Task {
+        activeDownloadTask = Task {
             await executeDownload(for: task)
             self.isProcessingQueue = false
+            self.activeDownloadTask = nil
             self.resumeProcessingQueue()
         }
     }
@@ -248,16 +278,29 @@ public final class DownloadManager: ObservableObject {
         let chapterDir = LocalStorageManager.shared.resolveURL(for: relativePath)
         try? fileManager.createDirectory(at: chapterDir, withIntermediateDirectories: true)
         
-        // If page URLs are empty, try fetching them from source provider
+        // 1. Resolve source provider & fetch page URLs if needed
         var pageURLs = task.chapter.pageURLs
         if pageURLs.isEmpty {
-            if let provider = SourceManager.shared.provider(for: task.manga.sourceID) {
+            let provider = SourceManager.shared.getSource(id: task.manga.sourceID) ?? SourceManager.shared.provider(for: task.manga.sourceID)
+            if let provider = provider {
                 do {
-                    pageURLs = try await provider.fetchPageURLs(for: task.chapter.sourceChapterID)
-                    var updatedChapter = task.chapter
-                    updatedChapter.pageURLs = pageURLs
-                    updatedChapter.pageCount = pageURLs.count
-                    DatabaseManager.shared.upsertChapters([updatedChapter])
+                    var cleanChapterId = task.chapter.sourceChapterID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let lastPart = cleanChapterId.components(separatedBy: "_").last, !lastPart.isEmpty {
+                        cleanChapterId = lastPart
+                    }
+                    if cleanChapterId.lowercased().hasPrefix("ch_") {
+                        cleanChapterId = String(cleanChapterId.dropFirst(3))
+                    } else if cleanChapterId.lowercased().hasPrefix("chapter_") {
+                        cleanChapterId = String(cleanChapterId.dropFirst(8))
+                    }
+                    
+                    pageURLs = try await provider.fetchPageURLs(for: cleanChapterId)
+                    if !pageURLs.isEmpty {
+                        var updatedChapter = task.chapter
+                        updatedChapter.pageURLs = pageURLs
+                        updatedChapter.pageCount = pageURLs.count
+                        DatabaseManager.shared.upsertChapters([updatedChapter])
+                    }
                 } catch {
                     if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
                         tasks[idx].status = .failed(message: error.localizedDescription)
@@ -268,34 +311,39 @@ public final class DownloadManager: ObservableObject {
         }
         
         guard !pageURLs.isEmpty else {
+            // Mark failed and return immediately so the worker loop advances to the next chapter
             if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
                 tasks[idx].status = .failed(message: "No pages found")
             }
             return
         }
         
-        var downloadedCount = 0
+        var completedPages = 0
+        var totalBytes: Int64 = 0
         let total = pageURLs.count
         
         for (pageIdx, url) in pageURLs.enumerated() {
-            // Check cancellation / paused
+            // Check cancellation or pause
+            if Task.isCancelled { return }
             guard let currentTask = tasks.first(where: { $0.id == task.id }),
                   case .downloading = currentTask.status else {
                 return
             }
             
-            let filename = String(format: "%04d.jpg", pageIdx + 1)
+            let filename = String(format: "%03d.jpg", pageIdx + 1)
             let destinationURL = chapterDir.appendingPathComponent(filename)
             
             if !fileManager.fileExists(atPath: destinationURL.path) {
                 do {
-                    let data = try await NetworkClient.shared.fetchData(from: url)
-                    try data.write(to: destinationURL)
+                    let data = try await NetworkClient.shared.fetchDataWithCDNHeaders(from: url)
+                    try data.write(to: destinationURL, options: .atomic)
+                    totalBytes += Int64(data.count)
                 } catch {
-                    // Try caching through image manager as fallback
+                    // Try caching through image cache manager as fallback
                     if let cached = await ImageCacheManager.shared.image(for: url),
                        let data = cached.jpegData(compressionQuality: 0.85) {
-                        try? data.write(to: destinationURL)
+                        try? data.write(to: destinationURL, options: .atomic)
+                        totalBytes += Int64(data.count)
                     } else {
                         if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
                             tasks[idx].status = .failed(message: "Failed page \(pageIdx + 1)")
@@ -303,20 +351,29 @@ public final class DownloadManager: ObservableObject {
                         return
                     }
                 }
+            } else {
+                if let attrs = try? fileManager.attributesOfItem(atPath: destinationURL.path),
+                   let size = attrs[.size] as? Int64 {
+                    totalBytes += size
+                }
             }
             
-            downloadedCount += 1
-            let progress = Double(downloadedCount) / Double(total)
+            completedPages += 1
+            let progress = Double(completedPages) / Double(total)
             if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
-                tasks[idx].downloadedPages = downloadedCount
+                tasks[idx].downloadedPages = completedPages
                 tasks[idx].totalPages = total
+                tasks[idx].bytesDownloaded = totalBytes
                 tasks[idx].status = .downloading(progress: progress)
             }
         }
         
-        // Success: Store strictly relative path in entities
+        // Success: Store strictly relative path in entities and mark completed
         if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
             tasks[idx].status = .completed
+            tasks[idx].downloadedPages = total
+            tasks[idx].totalPages = total
+            tasks[idx].bytesDownloaded = totalBytes
             
             var updatedChapter = task.chapter
             updatedChapter.isDownloaded = true
@@ -324,16 +381,19 @@ public final class DownloadManager: ObservableObject {
             updatedChapter.localDirectoryPath = relativePath
             DatabaseManager.shared.upsertChapters([updatedChapter])
         }
+        
+        updateTotalStorageUsage()
     }
     
     public func localPagesForChapter(_ chapter: ChapterItem, sourceID: String? = nil) -> [URL]? {
         return LocalStorageManager.shared.getLocalPages(for: chapter, sourceID: sourceID)
     }
     
-    public func calculateTotalDownloadsSize() -> String {
+    public func updateTotalStorageUsage() {
         let downloadsDir = LocalStorageManager.shared.resolveURL(for: "Downloads")
         guard let files = fileManager.enumerator(at: downloadsDir, includingPropertiesForKeys: [.fileSizeKey]) else {
-            return "0 MB"
+            self.totalDownloadedSize = 0
+            return
         }
         var totalBytes: Int64 = 0
         for case let fileURL as URL in files {
@@ -341,9 +401,15 @@ public final class DownloadManager: ObservableObject {
                 totalBytes += Int64(size)
             }
         }
+        self.totalDownloadedSize = totalBytes
+    }
+    
+    public func calculateTotalDownloadsSize() -> String {
+        updateTotalStorageUsage()
+        guard totalDownloadedSize > 0 else { return "0 KB" }
         let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
         formatter.countStyle = .file
-        return formatter.string(fromByteCount: totalBytes)
+        return formatter.string(fromByteCount: totalDownloadedSize)
     }
 }

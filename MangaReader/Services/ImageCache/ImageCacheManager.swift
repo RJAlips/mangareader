@@ -7,6 +7,34 @@
 
 import UIKit
 
+/// Concurrency limiter that throttles parallel image downloads (max 3-4 concurrent)
+/// so MangaDex@Home and third-party CDNs do not throttle, rate-limit, or drop connections.
+public actor ImageDownloadLimiter {
+    public static let shared = ImageDownloadLimiter()
+    private var activeCount = 0
+    private let maxConcurrent = 3
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    
+    public func acquire() async {
+        if activeCount < maxConcurrent {
+            activeCount += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+    
+    public func release() {
+        if !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            next.resume()
+        } else {
+            activeCount = max(0, activeCount - 1)
+        }
+    }
+}
+
 public final class ImageCacheManager: @unchecked Sendable {
     public static let shared = ImageCacheManager()
     
