@@ -8,32 +8,60 @@
 import SwiftUI
 
 public extension Color {
-    // Brand & Accents
-    static let mangaAccent = Color(red: 255/255, green: 82/255, blue: 82/255) // Vibrant Coral/Red
-    static let mangaAccentSecondary = Color(red: 255/255, green: 138/255, blue: 101/255)
-    static let mangaPurple = Color(red: 168/255, green: 85/255, blue: 247/255)
-    static let mangaBlue = Color(red: 59/255, green: 130/255, blue: 246/255)
-    static let mangaGreen = Color(red: 34/255, green: 197/255, blue: 94/255)
-    static let mangaAmber = Color(red: 245/255, green: 158/255, blue: 11/255)
+    // MARK: - Hex Initializer
+    init(hex: UInt, alpha: Double = 1.0) {
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xff) / 255,
+            green: Double((hex >> 08) & 0xff) / 255,
+            blue: Double((hex >> 00) & 0xff) / 255,
+            opacity: alpha
+        )
+    }
 
-    // Dark-Mode First Surfaces
-    static let appBackground = Color(red: 10/255, green: 10/255, blue: 12/255) // Rich AMOLED Black
-    static let surfacePrimary = Color(red: 22/255, green: 22/255, blue: 26/255)
-    static let surfaceSecondary = Color(red: 32/255, green: 32/255, blue: 38/255)
-    static let surfaceTertiary = Color(red: 45/255, green: 45/255, blue: 54/255)
-    static let surfaceOverlay = Color.black.opacity(0.7)
+    // MARK: - Tachimanga Liquid Glass & Periwinkle Palette
+    /// Primary Accent: Periwinkle Lavender-Blue (#9BB1FF)
+    static let mangaAccent = Color(hex: 0x9BB1FF)
+    /// Dark ink contrast text for periwinkle buttons and badges (#0E1528)
+    static let mangaAccentInk = Color(hex: 0x0E1528)
+    /// Soft secondary periwinkle
+    static let mangaAccentSecondary = Color(hex: 0xB5C4FF)
+    
+    // Status & Variety Accents
+    static let mangaGreen = Color(hex: 0x34D399)
+    static let mangaAmber = Color(hex: 0xFBBF24)
+    static let mangaRed = Color(hex: 0xF87171)
+    static let mangaPurple = Color(hex: 0xC084FC)
+    static let mangaBlue = Color(hex: 0x60A5FA)
 
-    // Text & Content
-    static let textPrimary = Color.white
-    static let textSecondary = Color(white: 0.65)
-    static let textTertiary = Color(white: 0.45)
-    static let borderSubtle = Color(white: 0.2, opacity: 0.5)
+    // MARK: - Dark-Mode Surfaces
+    /// Primary App Background: #0E0E10 (or pure #000000 when pure black dark mode is active)
+    static let appBackground = Color(hex: 0x0E0E10)
+    static let appPureBlack = Color.black
+    
+    /// Elevated Surface / Card / List Row: #18181C
+    static let surfacePrimary = Color(hex: 0x18181C)
+    static let surfaceSecondary = Color(hex: 0x222228)
+    static let surfaceTertiary = Color(hex: 0x2C2C34)
+    static let surfaceOverlay = Color.black.opacity(0.75)
+    
+    // MARK: - Glass Tokens
+    static let glassOverlay = Color.white.opacity(0.06)
+    static let glassBorder = Color.white.opacity(0.14)
+    static let glassHighlight = Color.white.opacity(0.10)
 
-    // Reader Themes
+    // MARK: - Text & Content
+    static let textPrimary = Color(hex: 0xF4F4F6)
+    static let textSecondary = Color(hex: 0x8E8E98)
+    static let textTertiary = Color(hex: 0x5A5A64) // Muted / read chapter text
+    static let textMuted = Color(hex: 0x5A5A64)
+    static let borderSubtle = Color.white.opacity(0.08)
+
+    // MARK: - Reader Themes
     static let readerPureBlack = Color.black
-    static let readerDarkGray = Color(red: 20/255, green: 20/255, blue: 22/255)
-    static let readerSepia = Color(red: 247/255, green: 241/255, blue: 227/255)
-    static let readerSepiaText = Color(red: 60/255, green: 50/255, blue: 40/255)
+    static let readerDarkGray = Color(hex: 0x141416)
+    static let readerSepia = Color(hex: 0xF7F1E3)
+    static let readerSepiaText = Color(hex: 0x3C3228)
     static let readerWhite = Color.white
     static let readerWhiteText = Color.black
 }
@@ -58,8 +86,8 @@ public extension LinearGradient {
     static let detailHeroOverlay = LinearGradient(
         colors: [
             Color.clear,
-            Color.appBackground.opacity(0.6),
-            Color.appBackground
+            Color(hex: 0x0E0E10).opacity(0.7),
+            Color(hex: 0x0E0E10)
         ],
         startPoint: .top,
         endPoint: .bottom

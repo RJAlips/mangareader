@@ -9,111 +9,307 @@ import SwiftUI
 
 public struct DownloadsView: View {
     @StateObject private var viewModel = DownloadsViewModel()
+    @ObservedObject private var appState = AppState.shared
+    @State private var showInfoBanner: Bool = true
+    @State private var concurrentDownloads: Int = 2
+    @State private var isPaused: Bool = false
     
     public init() {}
     
     public var body: some View {
         NavigationStack {
-            List {
-                // Storage & Network Settings Section
-                Section {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Total Offline Storage")
-                                .font(.captionMedium)
-                                .foregroundColor(.textSecondary)
-                            Text(viewModel.storageUsage)
-                                .font(.title3.bold())
-                                .foregroundColor(.textPrimary)
-                        }
-                        
-                        Spacer()
-                        
-                        Toggle("Wi-Fi Only", isOn: Binding(
-                            get: { viewModel.wifiOnly },
-                            set: { _ in viewModel.toggleWifiOnly() }
-                        ))
-                        .tint(.mangaAccent)
+            ScrollView {
+                VStack(spacing: 12) {
+                    // 1. Dismissible Info Banner
+                    if showInfoBanner {
+                        infoBanner
                     }
-                    .padding(.vertical, 4)
+                    
+                    // 2. Control Pills: Pause/Resume & Concurrency
+                    controlPillsRow
+                    
+                    // 3. Recently Downloaded Navigation Card
+                    NavigationLink(destination: DownloadedSeriesListView(viewModel: viewModel)) {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.mangaGreen.opacity(0.18))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.mangaGreen)
+                                    .font(.system(size: 16))
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Recently Downloaded")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.textPrimary)
+                                Text("Offline series & files (\(viewModel.storageUsage))")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.textSecondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.textTertiary)
+                        }
+                        .padding(12)
+                        .background(Color.surfacePrimary)
+                        .cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    // 4. Active Queues or Kaomoji Empty State
+                    if viewModel.mangaGroups.isEmpty {
+                        kaomojiEmptyState
+                            .padding(.top, 40)
+                    } else {
+                        queueSection
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 60)
+            }
+            .background(appState.currentBackground.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 6) {
+                        Text("Downloads")
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .foregroundColor(.textPrimary)
+                        Image(systemName: "icloud")
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                    }
                 }
                 
-                // Level 1: Manga Title Rows
-                if !viewModel.mangaGroups.isEmpty {
-                    Section("Downloaded Series (\(viewModel.mangaGroups.count))") {
-                        ForEach(viewModel.mangaGroups) { group in
-                            NavigationLink(destination: MangaDownloadDetailView(manga: group.manga, viewModel: viewModel)) {
-                                mangaTitleRow(group: group)
-                            }
-                        }
-                    }
-                } else {
-                    Section {
-                        VStack(spacing: Theme.Spacing.md) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 42))
-                                .foregroundColor(.textTertiary)
-                            Text("No Downloaded Series")
-                                .font(.sectionTitle)
-                                .foregroundColor(.textPrimary)
-                            Text("Downloaded chapters and active queues will appear here grouped by title.")
-                                .font(.bodyRegular)
-                                .foregroundColor(.textSecondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, Theme.Spacing.xl)
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Toggle("Wi-Fi Only", isOn: Binding(
+                        get: { viewModel.wifiOnly },
+                        set: { _ in viewModel.toggleWifiOnly() }
+                    ))
+                    .tint(.mangaAccent)
+                    .labelsHidden()
                 }
             }
-            .listStyle(InsetGroupedListStyle())
-            .navigationTitle("Downloads")
         }
     }
     
-    // Level 1: Manga Title Row
+    // MARK: - Info Banner
+    
+    private var infoBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "info.circle")
+                .foregroundColor(.mangaAccent)
+                .font(.system(size: 16))
+            
+            Text("Downloads will pause when you leave the app or lock your device.")
+                .font(.system(size: 12))
+                .foregroundColor(.textSecondary)
+                .lineLimit(2)
+            
+            Spacer()
+            
+            Button {
+                withAnimation(Theme.Animation.quick) {
+                    showInfoBanner = false
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.textTertiary)
+                    .padding(4)
+            }
+        }
+        .padding(10)
+        .background(Color.surfacePrimary)
+        .cornerRadius(10)
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 0.5))
+    }
+    
+    // MARK: - Control Pills
+    
+    private var controlPillsRow: some View {
+        HStack(spacing: 10) {
+            // Resume / Pause Pill
+            Button {
+                isPaused.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                    Text(isPaused ? "Resume" : "Pause")
+                }
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.mangaAccentInk)
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .background(Color.mangaAccent)
+                .clipShape(Capsule())
+            }
+            
+            // Concurrency Pill
+            Menu {
+                Button("1 Concurrent Download") { concurrentDownloads = 1 }
+                Button("2 Concurrent Downloads") { concurrentDownloads = 2 }
+                Button("3 Concurrent Downloads") { concurrentDownloads = 3 }
+                Button("5 Concurrent Downloads") { concurrentDownloads = 5 }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "bolt.fill")
+                    Text("Concurrent: \(concurrentDownloads)")
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.textPrimary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+            }
+        }
+    }
+    
+    // MARK: - Kaomoji Empty State
+    
+    private var kaomojiEmptyState: some View {
+        VStack(spacing: 14) {
+            Text("Σ(ಠ_ಠ)")
+                .font(.system(size: 38, weight: .medium, design: .rounded))
+                .foregroundColor(.textSecondary)
+            Text("No Downloads")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.textPrimary)
+            Text("Downloaded chapters and active queues will appear here grouped by title.")
+                .font(.system(size: 13))
+                .foregroundColor(.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+    }
+    
+    // MARK: - Active Queues Section
+    
+    private var queueSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Queued Series (\(viewModel.mangaGroups.count))")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.textSecondary)
+                .padding(.horizontal, 4)
+            
+            VStack(spacing: 0) {
+                ForEach(Array(viewModel.mangaGroups.enumerated()), id: \.element.id) { index, group in
+                    NavigationLink(destination: MangaDownloadDetailView(manga: group.manga, viewModel: viewModel)) {
+                        mangaTitleRow(group: group)
+                    }
+                    if index < viewModel.mangaGroups.count - 1 {
+                        Divider().background(Color.white.opacity(0.06)).padding(.leading, 64)
+                    }
+                }
+            }
+            .background(Color.surfacePrimary)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+        }
+    }
+    
     private func mangaTitleRow(group: MangaDownloadGroup) -> some View {
-        HStack(spacing: Theme.Spacing.md) {
+        HStack(spacing: 12) {
             AsyncMangaImage(
                 url: group.manga.coverURL,
                 contentMode: .fill,
-                cornerRadius: Theme.CornerRadius.small
+                cornerRadius: 6
             )
-            .frame(width: 48, height: 68)
+            .frame(width: 44, height: 62)
             .clipped()
             
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(group.manga.title)
-                    .font(.bodyEmphasized)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.textPrimary)
                     .lineLimit(1)
                 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text("\(group.downloadedCount) downloaded")
-                        .font(.captionMedium)
+                        .font(.system(size: 11))
                         .foregroundColor(.textSecondary)
                     
                     if group.queueCount > 0 {
-                        BadgeView(
-                            text: "\(group.queueCount) in queue",
-                            backgroundColor: Color.mangaAccent.opacity(0.18)
-                        )
+                        Text("\(group.queueCount) queued")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.mangaAccentInk)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.mangaAccent)
+                            .clipShape(Capsule())
                     }
                 }
                 
                 if let progress = group.activeProgress {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ProgressView(value: progress)
-                            .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
-                        Text(String(format: "Downloading %.0f%%", progress * 100))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.mangaAccent)
+                    ProgressView(value: progress)
+                        .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
+                        .padding(.top, 2)
+                }
+            }
+            
+            Spacer()
+            
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.textTertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Downloaded Series List View
+
+public struct DownloadedSeriesListView: View {
+    @ObservedObject public var viewModel: DownloadsViewModel
+    @ObservedObject private var appState = AppState.shared
+    
+    public init(viewModel: DownloadsViewModel) {
+        self.viewModel = viewModel
+    }
+    
+    public var body: some View {
+        List {
+            ForEach(viewModel.mangaGroups) { group in
+                NavigationLink(destination: MangaDownloadDetailView(manga: group.manga, viewModel: viewModel)) {
+                    HStack(spacing: 12) {
+                        AsyncMangaImage(url: group.manga.coverURL, contentMode: .fill, cornerRadius: 6)
+                            .frame(width: 44, height: 62)
+                            .clipped()
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(group.manga.title)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.textPrimary)
+                                .lineLimit(1)
+                            
+                            if let author = group.manga.author {
+                                Text(author)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.textSecondary)
+                            }
+                            
+                            Text("\(group.downloadedCount) chapters • \(group.manga.status.rawValue)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.textTertiary)
+                        }
                     }
-                    .padding(.top, 2)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .listStyle(InsetGroupedListStyle())
+        .background(appState.currentBackground.ignoresSafeArea())
+        .navigationTitle("Downloaded Series")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -139,11 +335,11 @@ public struct MangaDownloadDetailView: View {
         .navigationTitle(manga.title)
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $readingChapter) { ch in
-            ReaderContainerView(manga: manga, chapter: ch)
+            ReaderContainerView(manga: manga, chapter: ch, initialPage: ch.lastPageRead)
         }
     }
     
-    // MARK: - Section 1: In Progress / Queued
+    // In Progress / Queued
     @ViewBuilder
     private var inProgressSection: some View {
         let inProgress = viewModel.inProgressTasks(for: manga.id)
@@ -156,7 +352,7 @@ public struct MangaDownloadDetailView: View {
         }
     }
     
-    // MARK: - Section 2: Downloaded Chapters
+    // Downloaded Chapters
     @ViewBuilder
     private var downloadedSection: some View {
         let downloaded = viewModel.downloadedChapters(for: manga.id)
@@ -185,7 +381,7 @@ public struct MangaDownloadDetailView: View {
         }
     }
     
-    // MARK: - Section 3: Not Downloaded
+    // Not Downloaded
     @ViewBuilder
     private var notDownloadedSection: some View {
         let notDownloaded = viewModel.notDownloadedChapters(for: manga.id)
@@ -198,39 +394,16 @@ public struct MangaDownloadDetailView: View {
         }
     }
     
-    // In Progress / Queued Row
     private func inProgressTaskRow(task: DownloadTaskItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(task.chapter.displayTitle)
-                    .font(.bodyMedium)
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.textPrimary)
                     .lineLimit(1)
                 
                 Spacer()
                 
-                // Pause / Resume
-                if case .downloading = task.status {
-                    Button {
-                        viewModel.pause(task: task)
-                    } label: {
-                        Image(systemName: "pause.fill")
-                            .font(.system(size: 13))
-                            .foregroundColor(.mangaAccent)
-                    }
-                    .buttonStyle(.plain)
-                } else if case .paused = task.status {
-                    Button {
-                        viewModel.resume(task: task)
-                    } label: {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 13))
-                            .foregroundColor(.mangaGreen)
-                    }
-                    .buttonStyle(.plain)
-                }
-                
-                // Cancel
                 Button {
                     viewModel.cancel(task: task)
                 } label: {
@@ -239,28 +412,20 @@ public struct MangaDownloadDetailView: View {
                         .foregroundColor(.textTertiary)
                 }
                 .buttonStyle(.plain)
-                .padding(.leading, 6)
             }
             
-            HStack(spacing: 8) {
-                ProgressView(value: task.progress)
-                    .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
-                
-                Text(task.status.displayText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.textSecondary)
-            }
+            ProgressView(value: task.progress)
+                .progressViewStyle(LinearProgressViewStyle(tint: .mangaAccent))
         }
         .padding(.vertical, 4)
     }
     
-    // Downloaded Row
     private func downloadedChapterRow(chapter: ChapterItem) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(chapter.displayTitle)
-                        .font(.bodyMedium)
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.textPrimary)
                     Image(systemName: "book.circle.fill")
                         .font(.caption)
@@ -268,7 +433,7 @@ public struct MangaDownloadDetailView: View {
                 }
                 
                 Text(viewModel.chapterFileSize(chapter, sourceID: manga.sourceID))
-                    .font(.captionMedium)
+                    .font(.system(size: 11))
                     .foregroundColor(.textSecondary)
             }
             
@@ -282,11 +447,10 @@ public struct MangaDownloadDetailView: View {
         .contentShape(Rectangle())
     }
     
-    // Not Downloaded Row
     private func notDownloadedChapterRow(chapter: ChapterItem) -> some View {
         HStack {
             Text(chapter.displayTitle)
-                .font(.bodyMedium)
+                .font(.system(size: 14))
                 .foregroundColor(.textPrimary)
             
             Spacer()

@@ -29,96 +29,96 @@ public struct MangaCardView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            ZStack(alignment: .bottomLeading) {
-                // Cover Image
-                AsyncMangaImage(
-                    url: manga.coverURL,
-                    baseURL: baseURL,
-                    contentMode: .fill,
-                    cornerRadius: Theme.CornerRadius.card
-                )
-                .aspectRatio(0.70, contentMode: .fit)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.CornerRadius.card, style: .continuous)
-                        .stroke(isSelected ? Color.mangaAccent : Color.borderSubtle, lineWidth: isSelected ? 3 : 0.8)
-                )
+        ZStack(alignment: .bottomLeading) {
+            // Full-bleed Cover Image
+            AsyncMangaImage(
+                url: manga.coverURL,
+                baseURL: baseURL,
+                contentMode: .fill,
+                cornerRadius: 10
+            )
+            .aspectRatio(0.68, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .clipped()
+            
+            // Bottom 40% Gradient for Title Legibility
+            LinearGradient(
+                colors: [Color.clear, Color.black.opacity(0.4), Color.black.opacity(0.88)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+            
+            // Overlaid Title at Bottom-Left
+            VStack(alignment: .leading, spacing: 2) {
+                Spacer()
                 
-                // Bottom Gradient
-                LinearGradient.cardCoverOverlay
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.card, style: .continuous))
-                
-                // Badges overlay
-                VStack {
-                    HStack {
-                        if isSelectionMode {
-                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 20))
-                                .foregroundColor(isSelected ? .mangaAccent : .white)
-                                .shadow(radius: 2)
-                        } else if manga.isFavorite {
-                            Image(systemName: "heart.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(.mangaAccent)
-                                .padding(5)
-                                .background(Color.black.opacity(0.6))
-                                .clipShape(Circle())
-                        }
-                        
-                        Spacer()
-                        
-                        if showUnreadBadge && manga.unreadCount > 0 {
-                            UnreadCountBadge(count: manga.unreadCount)
-                        }
+                HStack(alignment: .bottom, spacing: 4) {
+                    Text(manga.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .shadow(color: .black.opacity(0.8), radius: 2, x: 0, y: 1)
+                    
+                    Spacer(minLength: 0)
+                    
+                    // Bottom-Right Reading Progress Badge
+                    if let chNum = manga.lastReadChapterNumber {
+                        Text("Ch. \(Int(chNum.rounded()))")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.black.opacity(0.65))
+                            .clipShape(Capsule())
                     }
-                    .padding(Theme.Spacing.xs)
+                }
+                .padding(.horizontal, 7)
+                .padding(.bottom, 7)
+            }
+            
+            // Top Badges Overlay
+            VStack {
+                HStack(alignment: .top) {
+                    // Top-Left: Periwinkle Unread Count Pill (#9BB1FF background, #0E1528 bold text)
+                    if showUnreadBadge && manga.unreadCount > 0 {
+                        Text("\(manga.unreadCount)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.mangaAccentInk)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.mangaAccent)
+                            .clipShape(Capsule())
+                            .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    }
                     
                     Spacer()
                     
-                    // Reading Progress Badge
-                    if let chNum = manga.lastReadChapterNumber {
-                        HStack(spacing: 3) {
-                            Image(systemName: "book.fill")
-                                .font(.system(size: 8))
-                            if let page = manga.lastReadPage, let total = manga.totalPages, total > 0 {
-                                Text("Ch. \(Int(chNum.rounded())) • \(page + 1)/\(total)")
-                                    .font(.system(size: 9, weight: .bold))
-                            } else {
-                                Text("Ch. \(Int(chNum.rounded()))")
-                                    .font(.system(size: 9, weight: .bold))
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.black.opacity(0.75))
-                        .clipShape(Capsule())
-                        .padding(6)
+                    if isSelectionMode {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 20))
+                            .foregroundColor(isSelected ? .mangaAccent : .white)
+                            .shadow(radius: 2)
+                    } else if manga.isFavorite {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.mangaAccent)
+                            .padding(4)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Circle())
                     }
                 }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.card, style: .continuous))
-            .shadow(color: Theme.Shadow.card, radius: 4, x: 0, y: 3)
-            
-            // Title
-            Text(manga.title)
-                .font(.cardTitle)
-                .foregroundColor(.textPrimary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-            
-            // Subtitle / Genres
-            if let firstGenre = manga.genres.first {
-                Text(firstGenre)
-                    .font(.cardSubtitle)
-                    .foregroundColor(.textSecondary)
-                    .lineLimit(1)
-            } else {
-                Text(manga.status.rawValue)
-                    .font(.cardSubtitle)
-                    .foregroundColor(.textTertiary)
-                    .lineLimit(1)
+                .padding(6)
+                
+                Spacer()
             }
         }
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? Color.mangaAccent : Color.white.opacity(0.12), lineWidth: isSelected ? 2.5 : 0.6)
+        )
+        .shadow(color: Color.black.opacity(0.35), radius: 4, x: 0, y: 2)
     }
 }

@@ -26,41 +26,37 @@ public struct ChapterRowView: View {
     }
     
     public var body: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            // Read indicator dot
-            Circle()
-                .fill(chapter.isRead ? Color.clear : Color.mangaAccent)
-                .frame(width: 6, height: 6)
-            
-            // Chapter Metadata
+        HStack(spacing: 12) {
+            // Chapter Title & Metadata on the left
             VStack(alignment: .leading, spacing: 3) {
                 Text(chapter.displayTitle)
-                    .font(.bodyMedium)
+                    .font(.system(size: 14, weight: chapter.isRead ? .regular : .semibold))
                     .foregroundColor(chapter.isRead ? .textTertiary : .textPrimary)
                     .lineLimit(1)
                 
-                HStack(spacing: Theme.Spacing.xs) {
-                    if let scan = chapter.scanlator {
-                        Text(scan)
-                            .font(.captionMedium)
+                HStack(spacing: 6) {
+                    if let date = chapter.releaseDate {
+                        Text(date, style: .date)
+                            .font(.system(size: 11))
                             .foregroundColor(.textTertiary)
                     }
                     
-                    if let date = chapter.releaseDate {
+                    if let scan = chapter.scanlator, !scan.isEmpty {
                         Text("•")
-                            .font(.captionMedium)
+                            .font(.system(size: 11))
                             .foregroundColor(.textTertiary)
-                        Text(date, style: .date)
-                            .font(.captionMedium)
+                        Text(scan)
+                            .font(.system(size: 11))
                             .foregroundColor(.textTertiary)
+                            .lineLimit(1)
                     }
                     
                     if chapter.lastPageRead > 0 && !chapter.isRead {
                         Text("•")
-                            .font(.captionMedium)
+                            .font(.system(size: 11))
                             .foregroundColor(.textTertiary)
                         Text("Page \(chapter.lastPageRead + 1)")
-                            .font(.captionMedium)
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.mangaAccent)
                     }
                 }
@@ -68,39 +64,48 @@ public struct ChapterRowView: View {
             
             Spacer()
             
-            // Download Action / Status
-            if chapter.isDownloaded {
-                Menu {
-                    Button(role: .destructive, action: onDeleteDownload) {
-                        Label("Delete Download", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.mangaGreen)
-                }
-            } else if chapter.downloadProgress > 0 && chapter.downloadProgress < 1.0 {
-                ProgressView(value: chapter.downloadProgress)
-                    .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
-                    .scaleEffect(0.7)
-                    .frame(width: 24, height: 24)
-            } else {
-                Button(action: onDownload) {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 20))
+            // Right-side Status / Action
+            HStack(spacing: 10) {
+                if chapter.isRead {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.textTertiary)
+                }
+                
+                if chapter.isDownloaded {
+                    Menu {
+                        Button(role: .destructive, action: onDeleteDownload) {
+                            Label("Delete Download", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.mangaGreen)
+                    }
+                } else if chapter.downloadProgress > 0 && chapter.downloadProgress < 1.0 {
+                    ProgressView(value: chapter.downloadProgress)
+                        .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                        .scaleEffect(0.7)
+                        .frame(width: 20, height: 20)
+                } else {
+                    Button(action: onDownload) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 18))
+                            .foregroundColor(.textTertiary)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
         .contentShape(Rectangle())
         .swipeActions(edge: .leading) {
             Button {
                 onToggleRead()
             } label: {
-                Label(chapter.isRead ? "Mark Unread" : "Mark Read", systemImage: chapter.isRead ? "eye.slash" : "eye")
+                Label(chapter.isRead ? "Mark Unread" : "Mark Read", systemImage: chapter.isRead ? "envelope.badge" : "envelope.open")
             }
-            .tint(.mangaBlue)
+            .tint(.mangaAccent)
         }
     }
 }

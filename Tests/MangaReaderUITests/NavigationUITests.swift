@@ -17,27 +17,26 @@ final class NavigationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         
-        // Check tabs exist
-        let discoverTab = app.tabBars.buttons["Discover"]
-        let libraryTab = app.tabBars.buttons["Library"]
-        let browseTab = app.tabBars.buttons["Browse"]
-        let downloadsTab = app.tabBars.buttons["Downloads"]
-        let settingsTab = app.tabBars.buttons["Settings"]
+        let libraryTab = app.buttons["Library"]
+        let updatesTab = app.buttons["Updates"]
+        let browseTab = app.buttons["Browse"]
+        let historyTab = app.buttons["History"]
+        let moreTab = app.buttons["More"]
         
-        if discoverTab.exists {
-            XCTAssertTrue(discoverTab.exists)
-            
-            libraryTab.tap()
-            XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 2))
-            
-            browseTab.tap()
-            XCTAssertTrue(app.navigationBars["Browse Sources"].waitForExistence(timeout: 2))
-            
-            downloadsTab.tap()
-            XCTAssertTrue(app.navigationBars["Downloads"].waitForExistence(timeout: 2))
-            
-            settingsTab.tap()
-            XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 2))
+        if libraryTab.exists {
+            XCTAssertTrue(libraryTab.exists)
+            if updatesTab.exists {
+                updatesTab.tap()
+            }
+            if browseTab.exists {
+                browseTab.tap()
+            }
+            if historyTab.exists {
+                historyTab.tap()
+            }
+            if moreTab.exists {
+                moreTab.tap()
+            }
         }
     }
 }

@@ -10,34 +10,36 @@ import UniformTypeIdentifiers
 
 public struct LibraryView: View {
     @StateObject private var viewModel = LibraryViewModel()
+    @ObservedObject private var appState = AppState.shared
     @State private var showCategorySheet = false
     @State private var showFilterSheet = false
     @State private var showFileImporter = false
+    @State private var showSearchField = false
     @State private var importErrorMessage: String? = nil
     @State private var activeReadingItem: ContinueReadingItem? = nil
     
-    // Columns for Grids
-    private let compactGridColumns = [
-        GridItem(.adaptive(minimum: 105, maximum: 140), spacing: Theme.Spacing.md, alignment: .top)
-    ]
-    private let comfortableGridColumns = [
-        GridItem(.adaptive(minimum: 155, maximum: 200), spacing: Theme.Spacing.lg, alignment: .top)
-    ]
-    
     public init() {}
+    
+    private var gridColumns: [GridItem] {
+        let count = max(2, min(5, appState.itemsPerRow))
+        return Array(repeating: GridItem(.flexible(), spacing: 10), count: count)
+    }
     
     public var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Search Bar
-                SearchBarView(
-                    text: $viewModel.searchQuery,
-                    placeholder: "Search library titles, authors...",
-                    onFilterTapped: { showFilterSheet = true }
-                )
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.top, Theme.Spacing.sm)
-                .padding(.bottom, Theme.Spacing.xs)
+                // Collapsible Search Bar
+                if showSearchField || !viewModel.searchQuery.isEmpty {
+                    SearchBarView(
+                        text: $viewModel.searchQuery,
+                        placeholder: "Search library titles, authors...",
+                        onFilterTapped: { showFilterSheet = true }
+                    )
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.top, Theme.Spacing.xs)
+                    .padding(.bottom, Theme.Spacing.xs)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 
                 // Category Pills
                 categoryBar
@@ -54,50 +56,92 @@ public struct LibraryView: View {
                     batchActionBar
                 }
             }
-            .background(Color.appBackground.ignoresSafeArea())
-            .navigationTitle("Library")
+            .background(appState.currentBackground.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 viewModel.refresh()
             }
             .toolbar {
+                // Left Title + Cloud Sync Icon
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 6) {
+                        Text("Library")
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .foregroundColor(.textPrimary)
+                        Image(systemName: "icloud")
+                            .font(.system(size: 13))
+                            .foregroundColor(.textSecondary)
+                    }
+                }
+                
+                // Right Glass Capsule Toolbar
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if viewModel.isSelectionMode {
                         Button("Cancel") {
                             viewModel.exitSelectionMode()
                         }
                         .foregroundColor(.mangaAccent)
+                        .font(.bodyMedium)
                     } else {
-                        Menu {
-                            Button {
-                                showFileImporter = true
-                            } label: {
-                                Label("Import Archive (CBZ/ZIP/EPUB)", systemImage: "square.and.arrow.down")
-                            }
-                            
-                            Button {
-                                showCategorySheet = true
-                            } label: {
-                                Label("Manage Categories", systemImage: "folder.badge.gearshape")
-                            }
-                            
-                            Button {
-                                viewModel.isSelectionMode = true
-                            } label: {
-                                Label("Batch Select", systemImage: "checkmark.circle")
-                            }
-                            
-                            Divider()
-                            
-                            Picker("Display Mode", selection: $viewModel.displayMode) {
-                                ForEach(LibraryDisplayMode.allCases, id: \.self) { mode in
-                                    Label(mode.rawValue, systemImage: mode.iconName).tag(mode)
-                                }
-                            }
+                        // Circular Filter Button
+                        Button {
+                            showFilterSheet = true
                         } label: {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.system(size: 18))
-                                .foregroundColor(.mangaAccent)
+                            Image(systemName: "line.3.horizontal.decrease")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.textPrimary)
                         }
+                        .glassCircle(size: 34)
+                        
+                        // Glass Capsule with Search & Overflow
+                        HStack(spacing: 12) {
+                            Button {
+                                withAnimation(Theme.Animation.quick) {
+                                    showSearchField.toggle()
+                                }
+                            } label: {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(showSearchField ? .mangaAccent : .textPrimary)
+                            }
+                            
+                            Rectangle()
+                                .fill(Color.white.opacity(0.18))
+                                .frame(width: 0.5, height: 14)
+                            
+                            Menu {
+                                Button {
+                                    showFileImporter = true
+                                } label: {
+                                    Label("Import Archive (CBZ/ZIP/EPUB)", systemImage: "square.and.arrow.down")
+                                }
+                                
+                                Button {
+                                    showCategorySheet = true
+                                } label: {
+                                    Label("Manage Categories", systemImage: "folder.badge.gearshape")
+                                }
+                                
+                                Button {
+                                    viewModel.isSelectionMode = true
+                                } label: {
+                                    Label("Batch Select", systemImage: "checkmark.circle")
+                                }
+                                
+                                Divider()
+                                
+                                Picker("Display Mode", selection: $viewModel.displayMode) {
+                                    ForEach(LibraryDisplayMode.allCases, id: \.self) { mode in
+                                        Label(mode.rawValue, systemImage: mode.iconName).tag(mode)
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(.textPrimary)
+                            }
+                        }
+                        .glassCapsule(height: 34, cornerRadius: 17, horizontalPadding: 11)
                     }
                 }
             }
@@ -139,25 +183,29 @@ public struct LibraryView: View {
     
     private var categoryBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Theme.Spacing.xs) {
+            HStack(spacing: 8) {
                 ForEach(viewModel.categories) { cat in
+                    let isSelected = viewModel.selectedCategory == cat.name
                     Button {
                         viewModel.selectedCategory = cat.name
                     } label: {
                         Text(cat.name)
-                            .font(.badgeFont)
+                            .font(.system(size: 12, weight: isSelected ? .bold : .medium))
                             .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
-                            .foregroundColor(viewModel.selectedCategory == cat.name ? .white : .textSecondary)
+                            .padding(.vertical, 6)
+                            .foregroundColor(isSelected ? .mangaAccentInk : .textSecondary)
                             .background(
                                 Capsule()
-                                    .fill(viewModel.selectedCategory == cat.name ? Color.mangaAccent : Color.surfaceSecondary)
+                                    .fill(isSelected ? Color.mangaAccent : Color.white.opacity(0.06))
+                            )
+                            .overlay(
+                                Capsule().stroke(Color.white.opacity(isSelected ? 0.0 : 0.12), lineWidth: 0.5)
                             )
                     }
                 }
             }
-            .padding(.horizontal, Theme.Spacing.lg)
-            .padding(.vertical, Theme.Spacing.sm)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
     }
     
@@ -166,7 +214,7 @@ public struct LibraryView: View {
     @ViewBuilder
     private var contentListOrGrid: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+            VStack(alignment: .leading, spacing: 14) {
                 // "Continue Reading" Shelf
                 if viewModel.searchQuery.isEmpty && !viewModel.isSelectionMode && !viewModel.currentlyReadingItems.isEmpty {
                     continueReadingShelf
@@ -174,64 +222,56 @@ public struct LibraryView: View {
                 
                 // Library Manga View
                 switch viewModel.displayMode {
-                case .compactGrid:
-                    LazyVGrid(columns: compactGridColumns, spacing: Theme.Spacing.md) {
+                case .compactGrid, .comfortableGrid:
+                    LazyVGrid(columns: gridColumns, spacing: 10) {
                         ForEach(viewModel.filteredManga) { manga in
                             mangaItemCell(manga: manga)
                         }
                     }
-                    .padding(.horizontal, Theme.Spacing.lg)
-                    
-                case .comfortableGrid:
-                    LazyVGrid(columns: comfortableGridColumns, spacing: Theme.Spacing.lg) {
-                        ForEach(viewModel.filteredManga) { manga in
-                            mangaItemCell(manga: manga)
-                        }
-                    }
-                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.horizontal, 12)
                     
                 case .list:
                     LazyVStack(spacing: Theme.Spacing.xs) {
                         ForEach(viewModel.filteredManga) { manga in
                             mangaRowCell(manga: manga)
-                            Divider().background(Color.borderSubtle)
+                            Divider().background(Color.white.opacity(0.06))
                         }
                     }
-                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.horizontal, 12)
                 }
             }
-            .padding(.vertical, Theme.Spacing.sm)
+            .padding(.top, 4)
+            .padding(.bottom, 80) // Floating Tab Bar inset
         }
     }
     
     // MARK: - Continue Reading Shelf
     
     private var continueReadingShelf: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "book.fill")
                     .font(.caption)
                     .foregroundColor(.mangaAccent)
                 Text("Continue Reading")
-                    .font(.bodyEmphasized)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.textPrimary)
                 Spacer()
                 Text("\(viewModel.currentlyReadingItems.count)")
                     .font(.caption)
                     .foregroundColor(.textTertiary)
             }
-            .padding(.horizontal, Theme.Spacing.lg)
+            .padding(.horizontal, 12)
             
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     ForEach(viewModel.currentlyReadingItems) { item in
                         continueReadingCard(for: item)
                     }
                 }
-                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.horizontal, 12)
             }
         }
-        .padding(.bottom, 6)
     }
     
     private func continueReadingCard(for item: ContinueReadingItem) -> some View {
@@ -242,27 +282,27 @@ public struct LibraryView: View {
                 AsyncMangaImage(
                     url: item.manga.coverURL,
                     contentMode: .fill,
-                    cornerRadius: Theme.CornerRadius.small,
+                    cornerRadius: 8,
                     showShimmer: false
                 )
-                .frame(width: 55, height: 78)
+                .frame(width: 52, height: 74)
                 .clipped()
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(item.manga.title)
-                        .font(.cardTitle)
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.textPrimary)
                         .lineLimit(1)
                     
                     Text(item.chapter.displayTitle)
-                        .font(.cardSubtitle)
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.mangaAccent)
                         .lineLimit(1)
                     
                     let pageCount = max(1, item.progress.totalPages)
                     let currentPage = item.progress.pageIndex + 1
                     Text("Page \(currentPage) of \(pageCount)")
-                        .font(.caption)
+                        .font(.system(size: 10))
                         .foregroundColor(.textSecondary)
                     
                     // Linear progress track
@@ -270,24 +310,24 @@ public struct LibraryView: View {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule()
-                                .fill(Color.surfaceSecondary)
-                                .frame(height: 4)
+                                .fill(Color.white.opacity(0.1))
+                                .frame(height: 3)
                             Capsule()
                                 .fill(Color.mangaAccent)
-                                .frame(width: geo.size.width * CGFloat(progressFraction), height: 4)
+                                .frame(width: geo.size.width * CGFloat(progressFraction), height: 3)
                         }
                     }
-                    .frame(height: 4)
+                    .frame(height: 3)
                     .padding(.top, 2)
                 }
-                .frame(width: 140, alignment: .leading)
+                .frame(width: 135, alignment: .leading)
             }
-            .padding(8)
+            .padding(7)
             .background(Color.surfacePrimary)
-            .cornerRadius(Theme.CornerRadius.medium)
+            .cornerRadius(10)
             .overlay(
-                RoundedRectangle(cornerRadius: Theme.CornerRadius.medium)
-                    .stroke(Color.borderSubtle, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
             )
         }
         .buttonStyle(PlainButtonStyle())
@@ -364,27 +404,44 @@ public struct LibraryView: View {
                     Image(systemName: "trash")
                     Text("Remove").font(.captionMedium)
                 }
-                .foregroundColor(.mangaAccent)
+                .foregroundColor(.mangaRed)
             }
         }
         .padding(.horizontal, Theme.Spacing.xl)
         .padding(.vertical, Theme.Spacing.md)
-        .background(Color.surfacePrimary.ignoresSafeArea(edges: .bottom))
-        .overlay(Rectangle().frame(height: 1).foregroundColor(Color.borderSubtle), alignment: .top)
+        .background(.ultraThinMaterial)
+        .overlay(Rectangle().frame(height: 0.5).foregroundColor(Color.white.opacity(0.12)), alignment: .top)
     }
     
     // MARK: - Empty State
     
     private var emptyState: some View {
-        VStack {
+        VStack(spacing: 12) {
             Spacer()
-            EmptyStateView(
-                icon: "books.vertical.fill",
-                title: "Your Library is Empty",
-                subtitle: "Discover manga from the Browse tab or import local CBZ/ZIP files.",
-                actionTitle: "Import Local Manga",
-                action: { showFileImporter = true }
-            )
+            Text("Σ(ಠ_ಠ)")
+                .font(.kaomoji)
+                .foregroundColor(.textSecondary)
+            Text("Your Library is Empty")
+                .font(.sectionTitle)
+                .foregroundColor(.textPrimary)
+            Text("Discover manga from Browse or import local CBZ/ZIP files.")
+                .font(.captionMedium)
+                .foregroundColor(.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            
+            Button {
+                showFileImporter = true
+            } label: {
+                Text("Import Local Manga")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.mangaAccentInk)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.mangaAccent)
+                    .clipShape(Capsule())
+            }
+            .padding(.top, 6)
             Spacer()
         }
     }
@@ -414,6 +471,7 @@ public struct LibraryView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { showFilterSheet = false }
                         .foregroundColor(.mangaAccent)
+                        .fontWeight(.semibold)
                 }
             }
         }

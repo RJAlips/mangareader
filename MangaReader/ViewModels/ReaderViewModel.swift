@@ -52,6 +52,7 @@ public final class ReaderViewModel: ObservableObject {
     private var allMangaChapters: [ChapterItem] = []
     private var loadingNextChapterIDs: Set<String> = []
     private var lastSeekTimestamp: Date = Date.distantPast
+    private var sessionStartTime: Date = Date()
     
     public var totalPagesInCurrentChapter: Int {
         if let currentSegment = chapterSegments.first(where: { $0.chapter.id == currentChapter.id }), !currentSegment.pageURLs.isEmpty {
@@ -273,12 +274,16 @@ public final class ReaderViewModel: ObservableObject {
         let total = activeChapter.pageCount > 0 ? activeChapter.pageCount : pages.count
         let isLastPage = (index >= max(0, total - 1))
         
+        let elapsed = max(0, min(300, Date().timeIntervalSince(sessionStartTime)))
+        sessionStartTime = Date()
+        
         // Sync reading progress into database & library automatically
         db.recordReadingProgress(
             chapter: activeChapter,
             manga: manga,
             pageIndex: index,
-            isComplete: isLastPage
+            isComplete: isLastPage,
+            additionalDuration: elapsed
         )
         
         if isLastPage {

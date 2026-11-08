@@ -61,9 +61,40 @@ public final class HistoryRepository: ObservableObject {
         return readingProgress(for: uuid)
     }
     
+    public func readingDuration(for mangaID: UUID) -> String {
+        let entries = db.historyList.filter { $0.mangaID == mangaID }
+        let totalSeconds = entries.reduce(0.0) { $0 + $1.readingTimeSeconds }
+        let totalMinutes = max(1, Int(totalSeconds) / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0 {
+            return "\(hours) h \(minutes) m"
+        } else {
+            return "\(minutes) m"
+        }
+    }
+    
+    public func removeHistory(for mangaID: UUID) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let filtered = self.db.historyList.filter { $0.mangaID != mangaID }
+            // Save updated history
+            for entry in self.db.historyList where entry.mangaID == mangaID {
+                self.db.updateProgress(chapterID: entry.chapterID, mangaID: entry.mangaID, pageIndex: 0, totalPages: 0)
+            }
+            self.continueReadingItems.removeAll(where: { $0.manga.id == mangaID })
+            self.db.saveHistoryToDiskSync()
+        }
+    }
+    
     public func clearHistory() {
-        for item in db.historyList {
-            db.updateProgress(chapterID: item.chapterID, mangaID: item.mangaID, pageIndex: 0, totalPages: 0)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            for item in self.db.historyList {
+                self.db.updateProgress(chapterID: item.chapterID, mangaID: item.mangaID, pageIndex: 0, totalPages: 0)
+            }
+            self.continueReadingItems.removeAll()
+            self.db.saveHistoryToDiskSync()
         }
     }
 }

@@ -344,8 +344,13 @@ public final class DatabaseManager: ObservableObject {
         chapter: ChapterItem,
         manga: MangaItem,
         pageIndex: Int,
-        isComplete: Bool = false
+        isComplete: Bool = false,
+        additionalDuration: TimeInterval = 0
     ) {
+        if AppState.shared.incognitoMode {
+            return
+        }
+
         let isFinished = isComplete || (chapter.pageCount > 0 && pageIndex >= chapter.pageCount - 1)
 
         // 1. Update Chapter in memory
@@ -370,11 +375,17 @@ public final class DatabaseManager: ObservableObject {
         }
 
         // 3. Update Progress History
+        var existingDuration: TimeInterval = 0
+        if let idx = historyList.firstIndex(where: { $0.chapterID == chapter.id }) {
+            existingDuration = historyList[idx].readingTimeSeconds
+        }
+        let totalDuration = existingDuration + additionalDuration
         let progress = ReadingProgress(
             chapterID: chapter.id,
             mangaID: manga.id,
             pageIndex: pageIndex,
-            totalPages: max(chapter.pageCount, 1)
+            totalPages: max(chapter.pageCount, 1),
+            readingTimeSeconds: totalDuration
         )
         if let idx = historyList.firstIndex(where: { $0.chapterID == chapter.id }) {
             historyList[idx] = progress
@@ -392,8 +403,24 @@ public final class DatabaseManager: ObservableObject {
         saveMangaToDiskSync()
     }
     
-    public func updateProgress(chapterID: UUID, mangaID: UUID, pageIndex: Int, totalPages: Int) {
-        let progress = ReadingProgress(chapterID: chapterID, mangaID: mangaID, pageIndex: pageIndex, totalPages: totalPages)
+    public func updateProgress(chapterID: UUID, mangaID: UUID, pageIndex: Int, totalPages: Int, additionalDuration: TimeInterval = 0) {
+        if AppState.shared.incognitoMode {
+            return
+        }
+
+        var existingDuration: TimeInterval = 0
+        if let index = historyList.firstIndex(where: { $0.chapterID == chapterID }) {
+            existingDuration = historyList[index].readingTimeSeconds
+        }
+        let totalDuration = existingDuration + additionalDuration
+
+        let progress = ReadingProgress(
+            chapterID: chapterID,
+            mangaID: mangaID,
+            pageIndex: pageIndex,
+            totalPages: totalPages,
+            readingTimeSeconds: totalDuration
+        )
         if let index = historyList.firstIndex(where: { $0.chapterID == chapterID }) {
             historyList[index] = progress
         } else {

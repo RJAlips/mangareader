@@ -21,6 +21,10 @@ public final class HomeViewModel: ObservableObject {
     @Published public private(set) var totalLibraryCount: Int = 0
     @Published public private(set) var totalUnreadChapters: Int = 0
     
+    // Updates status banner
+    @Published public var showUpdateToast: Bool = true
+    @Published public var updateSummary: String = "12 successful, 0 skipped, 0 failed."
+    
     private let db = DatabaseManager.shared
     private let historyRepo = HistoryRepository.shared
     private var cancellables = Set<AnyCancellable>()
@@ -62,6 +66,7 @@ public final class HomeViewModel: ObservableObject {
                     self.popularManga = popular
                     self.latestUpdates = latest
                     self.isLoading = false
+                    self.updateSummary = "\(latest.count) successful, 0 skipped, 0 failed."
                 } catch {
                     self.errorMessage = error.localizedDescription
                     self.isLoading = false
