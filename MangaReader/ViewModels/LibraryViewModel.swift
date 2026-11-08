@@ -66,17 +66,22 @@ public final class LibraryViewModel: ObservableObject {
             .store(in: &cancellables)
 
         // Also observe filter/sort knobs so the computed property stays fresh.
-        Publishers.MergeMany(
-            $selectedCategory.map { _ in () },
-            $searchQuery.map { _ in () },
-            $sortOption.map { _ in () },
-            $sortAscending.map { _ in () },
-            $unreadOnly.map { _ in () },
-            $downloadedOnly.map { _ in () }
-        )
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] _ in self?.libraryVersion &+= 1 }
-        .store(in: &cancellables)
+        // Note: Publishers.MergeMany requires homogeneous types so we subscribe
+        // to each @Published property individually using eraseToAnyPublisher().
+        let filterPublishers: [AnyPublisher<Void, Never>] = [
+            $selectedCategory.map { _ in () }.eraseToAnyPublisher(),
+            $searchQuery.map { _ in () }.eraseToAnyPublisher(),
+            $sortOption.map { _ in () }.eraseToAnyPublisher(),
+            $sortAscending.map { _ in () }.eraseToAnyPublisher(),
+            $unreadOnly.map { _ in () }.eraseToAnyPublisher(),
+            $downloadedOnly.map { _ in () }.eraseToAnyPublisher()
+        ]
+        for pub in filterPublishers {
+            pub
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] in self?.libraryVersion &+= 1 }
+                .store(in: &cancellables)
+        }
     }
     
     /// Re-computed every time `libraryVersion` changes (via `objectWillChange`).
