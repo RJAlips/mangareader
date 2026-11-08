@@ -25,18 +25,53 @@ public final class DatabaseManager: ObservableObject {
     private init() {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         self.storageDirectory = appSupport.appendingPathComponent("MangaReaderStore", isDirectory: true)
-        
+
         try? fileManager.createDirectory(at: storageDirectory, withIntermediateDirectories: true)
-        
+
         loadFromDisk()
-        
+
         if categoriesList.isEmpty {
             categoriesList = CategoryItem.defaultCategories
             saveCategoriesToDisk()
         }
     }
-    
+
     // MARK: - Disk Persistence
+
+    /// Re-reads every JSON file from disk and republishes the in-memory state.
+    /// Called on `.active` scene-phase transitions so that changes made by an
+    /// extension (or another copy of the app) while suspended are picked up.
+    public func reloadFromDisk() {
+        queue.sync {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+
+            if let data = try? Data(contentsOf: mangaFileURL),
+               let list = try? decoder.decode([MangaItem].self, from: data) {
+                DispatchQueue.main.async { self.mangaList = list }
+            }
+            if let data = try? Data(contentsOf: chaptersFileURL),
+               let list = try? decoder.decode([ChapterItem].self, from: data) {
+                DispatchQueue.main.async { self.chaptersList = list }
+            }
+            if let data = try? Data(contentsOf: categoriesFileURL),
+               let list = try? decoder.decode([CategoryItem].self, from: data) {
+                DispatchQueue.main.async { self.categoriesList = list }
+            }
+            if let data = try? Data(contentsOf: historyFileURL),
+               let list = try? decoder.decode([ReadingProgress].self, from: data) {
+                DispatchQueue.main.async { self.historyList = list }
+            }
+            if let data = try? Data(contentsOf: settingsFileURL),
+               let settings = try? decoder.decode(ReaderSettings.self, from: data) {
+                DispatchQueue.main.async { self.readerSettings = settings }
+            }
+            if let data = try? Data(contentsOf: trackingFileURL),
+               let links = try? decoder.decode([String: String].self, from: data) {
+                DispatchQueue.main.async { self.trackingLinks = links }
+            }
+        }
+    }
     
     private var mangaFileURL: URL { storageDirectory.appendingPathComponent("manga.json") }
     private var chaptersFileURL: URL { storageDirectory.appendingPathComponent("chapters.json") }
@@ -187,36 +222,36 @@ public final class DatabaseManager: ObservableObject {
         } else {
             mangaList.append(manga)
         }
-        saveMangaToDisk()
+        saveMangaToDiskSync()
     }
-    
+
     public func toggleFavorite(mangaID: UUID) {
         if let index = mangaList.firstIndex(where: { $0.id == mangaID }) {
             mangaList[index].isFavorite.toggle()
             if mangaList[index].isFavorite {
                 mangaList[index].inLibrary = true
             }
-            saveMangaToDisk()
+            saveMangaToDiskSync()
         }
     }
-    
+
     public func toggleLibrary(mangaID: UUID) {
         if let index = mangaList.firstIndex(where: { $0.id == mangaID }) {
             mangaList[index].inLibrary.toggle()
-            saveMangaToDisk()
+            saveMangaToDiskSync()
         }
     }
-    
+
     public func removeManga(mangaID: UUID) {
         mangaList.removeAll(where: { $0.id == mangaID })
         chaptersList.removeAll(where: { $0.mangaID == mangaID })
         historyList.removeAll(where: { $0.mangaID == mangaID })
         trackingLinks.removeValue(forKey: mangaID.uuidString)
-        saveAll()
+        saveAllSync()
     }
-    
+
     // MARK: - Chapter Operations
-    
+
     public func upsertChapters(_ chapters: [ChapterItem]) {
         for chapter in chapters {
             if let index = chaptersList.firstIndex(where: { $0.id == chapter.id }) {
@@ -226,9 +261,9 @@ public final class DatabaseManager: ObservableObject {
             }
         }
         recalculateUnreadCounts()
-        saveChaptersToDisk()
+        saveChaptersToDiskSync()
     }
-    
+
     public func setChapterReadStatus(chapterID: UUID, isRead: Bool) {
         if let index = chaptersList.firstIndex(where: { $0.id == chapterID }) {
             chaptersList[index].isRead = isRead
@@ -236,10 +271,10 @@ public final class DatabaseManager: ObservableObject {
                 chaptersList[index].lastPageRead = chaptersList[index].pageCount
             }
             recalculateUnreadCounts(for: chaptersList[index].mangaID)
-            saveChaptersToDisk()
+            saveChaptersToDiskSync()
         }
     }
-    
+
     public func markAllChaptersRead(mangaID: UUID, isRead: Bool) {
         for i in 0..<chaptersList.count {
             if chaptersList[i].mangaID == mangaID {
@@ -250,14 +285,14 @@ public final class DatabaseManager: ObservableObject {
             }
         }
         recalculateUnreadCounts(for: mangaID)
-        saveChaptersToDisk()
+        saveChaptersToDiskSync()
     }
-    
+
     public func chapters(for mangaID: UUID) -> [ChapterItem] {
         return chaptersList.filter { $0.mangaID == mangaID }
             .sorted { $0.chapterNumber < $1.chapterNumber }
     }
-    
+
     private func recalculateUnreadCounts(for mangaID: UUID? = nil) {
         let targets = mangaID != nil ? [mangaID!] : mangaList.map { $0.id }
         for target in targets {
@@ -266,11 +301,11 @@ public final class DatabaseManager: ObservableObject {
                 mangaList[index].unreadCount = unread
             }
         }
-        saveMangaToDisk()
+        saveMangaToDiskSync()
     }
-    
+
     // MARK: - Reading Progress
-    
+
     public func recordReadingProgress(
         chapter: ChapterItem,
         manga: MangaItem,
@@ -278,7 +313,7 @@ public final class DatabaseManager: ObservableObject {
         isComplete: Bool = false
     ) {
         let isFinished = isComplete || (chapter.pageCount > 0 && pageIndex >= chapter.pageCount - 1)
-        
+
         // 1. Update Chapter in memory
         if let chIdx = chaptersList.firstIndex(where: { $0.id == chapter.id }) {
             chaptersList[chIdx].lastPageRead = pageIndex
@@ -287,7 +322,7 @@ public final class DatabaseManager: ObservableObject {
                 chaptersList[chIdx].isRead = true
             }
         }
-        
+
         // 2. Update Manga in memory with reactive timestamp and chapter link
         if let mIdx = mangaList.firstIndex(where: { $0.id == manga.id }) {
             let now = Date()
@@ -297,7 +332,7 @@ public final class DatabaseManager: ObservableObject {
             mangaList[mIdx].lastReadChapterNumber = chapter.chapterNumber
             mangaList[mIdx].lastReadChapterTitle = chapter.displayTitle
         }
-        
+
         // 3. Update Progress History
         let progress = ReadingProgress(
             chapterID: chapter.id,
@@ -310,13 +345,15 @@ public final class DatabaseManager: ObservableObject {
         } else {
             historyList.append(progress)
         }
-        
+
         recalculateUnreadCounts(for: manga.id)
-        
-        // Synchronous main thread save to disk
-        saveHistoryToDisk()
-        saveChaptersToDisk()
-        saveMangaToDisk()
+
+        // Synchronous main thread save to disk — guarantees the write is
+        // durable before the reader view returns, so a suspension/termination
+        // cannot lose reading progress.
+        saveHistoryToDiskSync()
+        saveChaptersToDiskSync()
+        saveMangaToDiskSync()
     }
     
     public func updateProgress(chapterID: UUID, mangaID: UUID, pageIndex: Int, totalPages: Int) {

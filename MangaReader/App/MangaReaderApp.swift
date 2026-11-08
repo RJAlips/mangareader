@@ -36,7 +36,7 @@ struct MangaReaderApp: App {
                 // Refresh in-memory state from disk in case another process
                 // (e.g. an extension) modified the store while backgrounded.
                 DatabaseManager.shared.reloadFromDisk()
-            @default:
+            default:
                 break
             }
         }
