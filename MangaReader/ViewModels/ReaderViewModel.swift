@@ -340,18 +340,21 @@ public final class ReaderViewModel: ObservableObject {
     }
     
     private func prefetchUpcomingPages() {
-        guard settings.preloadPageCount > 0 else { return }
-        let nextRange = (currentPageIndex + 1)...min(currentPageIndex + settings.preloadPageCount, max(0, pages.count - 1))
+        guard settings.preloadPagesAhead > 0 else { return }
+        let nextRange = (currentPageIndex + 1)...min(currentPageIndex + settings.preloadPagesAhead, max(0, pages.count - 1))
         guard nextRange.lowerBound <= nextRange.upperBound else { return }
         
         Task {
             for idx in nextRange {
                 guard idx < pages.count else { continue }
                 let url = pages[idx]
-                if !url.isFileURL && await ImageCacheManager.shared.image(for: url) == nil {
-                    if let data = try? await NetworkClient.shared.fetchDataWithCDNHeaders(from: url),
-                       let img = UIImage(data: data) {
-                        await ImageCacheManager.shared.insert(img, for: url, data: data)
+                if !url.isFileURL {
+                    let cached = await ImageCacheManager.shared.image(for: url)
+                    if cached == nil {
+                        if let data = try? await NetworkClient.shared.fetchDataWithCDNHeaders(from: url),
+                           let img = UIImage(data: data) {
+                            await ImageCacheManager.shared.insert(img, for: url, data: data)
+                        }
                     }
                 }
             }

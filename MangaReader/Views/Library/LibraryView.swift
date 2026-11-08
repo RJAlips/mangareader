@@ -259,7 +259,7 @@ public struct LibraryView: View {
                         .foregroundColor(.mangaAccent)
                         .lineLimit(1)
                     
-                    let pageCount = max(1, item.progress.pageCount)
+                    let pageCount = max(1, item.progress.totalPages)
                     let currentPage = item.progress.pageIndex + 1
                     Text("Page \(currentPage) of \(pageCount)")
                         .font(.caption)
