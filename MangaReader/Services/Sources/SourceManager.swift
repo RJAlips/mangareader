@@ -52,10 +52,10 @@ public final class SourceManager: ObservableObject {
            let savedRepos = try? JSONDecoder().decode([RepositoryInfo].self, from: repoData) {
             self.repositories = savedRepos
         } else {
-            self.repositories = [
-                RepositoryInfo(name: "Official MangaDex Repository", url: "https://api.mangadex.org", sourceCount: 1),
-                RepositoryInfo(name: "MangaReader Curated Catalog", url: "https://mangareader.local/demo", sourceCount: 1)
-            ]
+            // Start with an empty list — users add repos via the UI.
+            // MangaDex is available as a built-in source (already in `sources`),
+            // so it doesn't need a URL-based repository entry.
+            self.repositories = []
         }
     }
     

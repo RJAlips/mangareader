@@ -82,6 +82,7 @@ public final class DatabaseManager: ObservableObject {
         }
     }
     
+    /// Saves all data asynchronously (normal in-app usage).
     public func saveAll() {
         saveMangaToDisk()
         saveChaptersToDisk()
@@ -89,6 +90,35 @@ public final class DatabaseManager: ObservableObject {
         saveHistoryToDisk()
         saveSettingsToDisk()
         saveTrackingToDisk()
+    }
+    
+    /// Saves all data **synchronously** — call this from scene-phase transitions
+    /// (.background / .inactive) so the OS cannot suspend the process before
+    /// the writes complete.
+    public func saveAllSync() {
+        queue.sync {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = .prettyPrinted
+            if let data = try? encoder.encode(self.mangaList) {
+                try? data.write(to: self.mangaFileURL, options: .atomic)
+            }
+            if let data = try? encoder.encode(self.chaptersList) {
+                try? data.write(to: self.chaptersFileURL, options: .atomic)
+            }
+            if let data = try? encoder.encode(self.categoriesList) {
+                try? data.write(to: self.categoriesFileURL, options: .atomic)
+            }
+            if let data = try? encoder.encode(self.historyList) {
+                try? data.write(to: self.historyFileURL, options: .atomic)
+            }
+            if let data = try? encoder.encode(self.readerSettings) {
+                try? data.write(to: self.settingsFileURL, options: .atomic)
+            }
+            if let data = try? encoder.encode(self.trackingLinks) {
+                try? data.write(to: self.trackingFileURL, options: .atomic)
+            }
+        }
     }
     
     public func saveMangaToDisk() {

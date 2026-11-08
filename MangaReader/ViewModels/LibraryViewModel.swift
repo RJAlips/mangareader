@@ -42,17 +42,47 @@ public final class LibraryViewModel: ObservableObject {
     private let repo = LibraryRepository.shared
     private let db = DatabaseManager.shared
     private var cancellables = Set<AnyCancellable>()
+
+    /// Incremented every time the library data changes so SwiftUI re-evaluates
+    /// `filteredManga` without storing a redundant copy of the array.
+    @Published private var libraryVersion: Int = 0
     
     public init() {
         db.$categoriesList
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] cats in
                 self?.categories = cats
             }
             .store(in: &cancellables)
+
+        // Whenever the underlying library list changes, bump the version counter.
+        // Any view that accesses `filteredManga` will re-render because a
+        // @Published property on this @MainActor ObservableObject changed.
+        repo.$libraryItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.libraryVersion &+= 1
+            }
+            .store(in: &cancellables)
+
+        // Also observe filter/sort knobs so the computed property stays fresh.
+        Publishers.MergeMany(
+            $selectedCategory.map { _ in () },
+            $searchQuery.map { _ in () },
+            $sortOption.map { _ in () },
+            $sortAscending.map { _ in () },
+            $unreadOnly.map { _ in () },
+            $downloadedOnly.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in self?.libraryVersion &+= 1 }
+        .store(in: &cancellables)
     }
     
+    /// Re-computed every time `libraryVersion` changes (via `objectWillChange`).
     public var filteredManga: [MangaItem] {
-        repo.filteredAndSorted(
+        _ = libraryVersion // create dependency on the published counter
+        return repo.filteredAndSorted(
             category: selectedCategory,
             searchQuery: searchQuery,
             sortOption: sortOption,
