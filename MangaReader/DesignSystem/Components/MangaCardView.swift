@@ -9,28 +9,32 @@ import SwiftUI
 
 public struct MangaCardView: View {
     public let manga: MangaItem
+    public let baseURL: URL?
     public var showUnreadBadge: Bool = true
     public var isSelected: Bool = false
     public var isSelectionMode: Bool = false
-    
+
     public init(
         manga: MangaItem,
+        baseURL: URL? = nil,
         showUnreadBadge: Bool = true,
         isSelected: Bool = false,
         isSelectionMode: Bool = false
     ) {
         self.manga = manga
+        self.baseURL = baseURL
         self.showUnreadBadge = showUnreadBadge
         self.isSelected = isSelected
         self.isSelectionMode = isSelectionMode
     }
-    
+
     public var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
             ZStack(alignment: .bottomLeading) {
                 // Cover Image
                 AsyncMangaImage(
                     url: manga.coverURL,
+                    baseURL: baseURL,
                     contentMode: .fill,
                     cornerRadius: Theme.CornerRadius.card
                 )

@@ -9,15 +9,22 @@ import SwiftUI
 
 public struct MangaRowView: View {
     public let manga: MangaItem
+    public let baseURL: URL?
     public var isSelected: Bool = false
     public var isSelectionMode: Bool = false
-    
-    public init(manga: MangaItem, isSelected: Bool = false, isSelectionMode: Bool = false) {
+
+    public init(
+        manga: MangaItem,
+        baseURL: URL? = nil,
+        isSelected: Bool = false,
+        isSelectionMode: Bool = false
+    ) {
         self.manga = manga
+        self.baseURL = baseURL
         self.isSelected = isSelected
         self.isSelectionMode = isSelectionMode
     }
-    
+
     public var body: some View {
         HStack(spacing: Theme.Spacing.md) {
             if isSelectionMode {
@@ -25,10 +32,11 @@ public struct MangaRowView: View {
                     .foregroundColor(isSelected ? .mangaAccent : .textTertiary)
                     .font(.system(size: 22))
             }
-            
+
             // Thumbnail
             AsyncMangaImage(
                 url: manga.coverURL,
+                baseURL: baseURL,
                 contentMode: .fill,
                 cornerRadius: Theme.CornerRadius.small
             )

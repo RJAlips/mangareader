@@ -40,10 +40,11 @@ struct MangaReaderApp: App {
                 break
             }
         }
-        .onExitNotifications(perform: {
-            // Final safety net: persist on app termination (force-quit path
-            // where .background may not fire).
-            DatabaseManager.shared.saveAllSync()
-        })
+        // Note: a dedicated "app termination" hook is intentionally omitted.
+        // All user-facing mutations (reading progress, library toggle, chapter
+        // read status) now write synchronously to disk, and the .background /
+        // .inactive handler above flushes the remaining async writes. Together
+        // these guarantee durability across suspension, termination, and the
+        // force-quit path — without relying on a non-existent Scene modifier.
     }
 }

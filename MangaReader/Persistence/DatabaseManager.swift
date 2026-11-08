@@ -166,7 +166,21 @@ public final class DatabaseManager: ObservableObject {
             }
         }
     }
-    
+
+    /// Synchronous variant — blocks until the write is durable on disk.
+    /// Used for critical mutations (reading progress, library toggle) so a
+    /// suspension/termination cannot silently drop user data.
+    public func saveMangaToDiskSync() {
+        queue.sync {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = .prettyPrinted
+            if let data = try? encoder.encode(self.mangaList) {
+                try? data.write(to: self.mangaFileURL, options: .atomic)
+            }
+        }
+    }
+
     public func saveChaptersToDisk() {
         queue.async {
             let encoder = JSONEncoder()
@@ -176,7 +190,17 @@ public final class DatabaseManager: ObservableObject {
             }
         }
     }
-    
+
+    public func saveChaptersToDiskSync() {
+        queue.sync {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(self.chaptersList) {
+                try? data.write(to: self.chaptersFileURL, options: .atomic)
+            }
+        }
+    }
+
     public func saveCategoriesToDisk() {
         queue.async {
             let encoder = JSONEncoder()
@@ -185,7 +209,7 @@ public final class DatabaseManager: ObservableObject {
             }
         }
     }
-    
+
     public func saveHistoryToDisk() {
         queue.async {
             let encoder = JSONEncoder()
@@ -195,7 +219,17 @@ public final class DatabaseManager: ObservableObject {
             }
         }
     }
-    
+
+    public func saveHistoryToDiskSync() {
+        queue.sync {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(self.historyList) {
+                try? data.write(to: self.historyFileURL, options: .atomic)
+            }
+        }
+    }
+
     public func saveSettingsToDisk() {
         queue.async {
             let encoder = JSONEncoder()
@@ -204,7 +238,7 @@ public final class DatabaseManager: ObservableObject {
             }
         }
     }
-    
+
     public func saveTrackingToDisk() {
         queue.async {
             let encoder = JSONEncoder()

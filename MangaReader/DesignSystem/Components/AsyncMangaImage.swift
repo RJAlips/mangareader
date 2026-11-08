@@ -11,41 +11,43 @@ import UIKit
 
 public struct AsyncMangaImage: View {
     private let url: URL?
+    /// Base URL used to resolve relative cover paths returned by repositories.
+    private let baseURL: URL?
     private let contentMode: ContentMode
     private let cornerRadius: CGFloat
     private let showShimmer: Bool
     private let customHeaders: [String: String]?
-    
+
     @State private var loadedImage: UIImage? = nil
     @State private var isLoading: Bool = false
     @State private var hasFailed: Bool = false
-    
+
     public init(
         url: URL?,
+        baseURL: URL? = nil,
         contentMode: ContentMode = .fill,
         cornerRadius: CGFloat = Theme.CornerRadius.medium,
         showShimmer: Bool = true,
         headers: [String: String]? = nil
     ) {
-        self.url = url
+        self.url = URLResolver.resolve(url?.absoluteString, relativeTo: baseURL)
+        self.baseURL = baseURL
         self.contentMode = contentMode
         self.cornerRadius = cornerRadius
         self.showShimmer = showShimmer
         self.customHeaders = headers
     }
-    
+
     public init(
         urlString: String?,
+        baseURL: URL? = nil,
         contentMode: ContentMode = .fill,
         cornerRadius: CGFloat = Theme.CornerRadius.medium,
         showShimmer: Bool = true,
         headers: [String: String]? = nil
     ) {
-        if let string = urlString, let parsed = URL(string: string) {
-            self.init(url: parsed, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
-        } else {
-            self.init(url: nil, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
-        }
+        let resolved = URLResolver.resolve(urlString, relativeTo: baseURL)
+        self.init(url: resolved, baseURL: baseURL, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
     }
     
     public var body: some View {
@@ -112,31 +114,15 @@ public struct AsyncMangaImage: View {
         // 3. Remote Download with fallback & custom CDN headers
         isLoading = true
         hasFailed = false
-        
-        // Build request headers with Referer & Safari User-Agent
-        var requestHeaders: [String: String] = customHeaders ?? [:]
-        let host = url.host?.lowercased() ?? ""
-        if host.contains("mangadex.org") {
-            if requestHeaders["User-Agent"] == nil {
-                requestHeaders["User-Agent"] = "MangaReader/1.0.0 (iOS; Apple; CFNetwork)"
-            }
-        } else {
-            if requestHeaders["User-Agent"] == nil {
-                requestHeaders["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-            }
-            if requestHeaders["Referer"] == nil && !host.isEmpty {
-                requestHeaders["Referer"] = "https://\(host)/"
-            }
-        }
-        
+
         do {
-            let data = try await NetworkClient.shared.fetchData(from: url, headers: requestHeaders)
+            let data = try await NetworkClient.shared.fetchDataWithCDNHeaders(from: url, headers: customHeaders)
             guard let image = UIImage(data: data) else {
                 hasFailed = true
                 isLoading = false
                 return
             }
-            
+
             await ImageCacheManager.shared.insert(image, for: url, data: data)
             self.loadedImage = image
             self.isLoading = false
@@ -146,7 +132,7 @@ public struct AsyncMangaImage: View {
                 let base = String(url.absoluteString.dropLast(8))
                 let candidateURLs = ["\(base).256.jpg", base].compactMap { URL(string: $0) }
                 for fallbackURL in candidateURLs {
-                    if let data = try? await NetworkClient.shared.fetchData(from: fallbackURL, headers: requestHeaders),
+                    if let data = try? await NetworkClient.shared.fetchDataWithCDNHeaders(from: fallbackURL, headers: customHeaders),
                        let image = UIImage(data: data) {
                         await ImageCacheManager.shared.insert(image, for: url, data: data)
                         self.loadedImage = image
