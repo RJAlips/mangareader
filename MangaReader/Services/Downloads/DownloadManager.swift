@@ -153,11 +153,11 @@ public final class DownloadManager: ObservableObject {
         updateTotalStorageUsage()
     }
     
-    public func getLocalChapterPageURLs(mangaId: String, chapterId: String) -> [String]? {
+    nonisolated public func getLocalChapterPageURLs(mangaId: String, chapterId: String) -> [String]? {
         return LocalStorageManager.shared.getLocalChapterPageURLs(mangaId: mangaId, chapterId: chapterId)
     }
     
-    public func getLocalChapterPageURLs(mangaId: UUID, chapterId: UUID) -> [String]? {
+    nonisolated public func getLocalChapterPageURLs(mangaId: UUID, chapterId: UUID) -> [String]? {
         return getLocalChapterPageURLs(mangaId: mangaId.uuidString, chapterId: chapterId.uuidString)
     }
     
