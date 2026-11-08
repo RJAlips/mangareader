@@ -11,6 +11,8 @@ public struct ReaderControlsOverlay: View {
     @ObservedObject public var viewModel: ReaderViewModel
     public let onClose: () -> Void
     
+    @State private var dragPageValue: Double = 0
+    
     public init(viewModel: ReaderViewModel, onClose: @escaping () -> Void) {
         self.viewModel = viewModel
         self.onClose = onClose
@@ -27,6 +29,14 @@ public struct ReaderControlsOverlay: View {
             bottomBar
         }
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        .onAppear {
+            dragPageValue = Double(viewModel.currentPageIndex)
+        }
+        .onChange(of: viewModel.currentPageIndex) { newIndex in
+            if !viewModel.isScrubbingSlider {
+                dragPageValue = Double(newIndex)
+            }
+        }
     }
     
     // MARK: - Top Bar
@@ -108,7 +118,7 @@ public struct ReaderControlsOverlay: View {
                 Button(action: { viewModel.goToPreviousChapter() }) {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.backward")
-                        Text("Prev")
+                        Text("Prev Ch")
                     }
                     .font(.captionMedium)
                     .foregroundColor(viewModel.hasPreviousChapter ? .white : .textTertiary)
@@ -117,19 +127,37 @@ public struct ReaderControlsOverlay: View {
                 
                 Spacer()
                 
-                Text("\(viewModel.currentPageIndex + 1) / \(max(1, viewModel.pages.count))")
-                    .font(.readerCounter)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.6))
-                    .clipShape(Capsule())
+                HStack(spacing: 8) {
+                    Button(action: { viewModel.stepPage(forward: false) }) {
+                        Image(systemName: "backward.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(viewModel.currentPageIndex > 0 ? .white : .textTertiary)
+                    }
+                    .disabled(viewModel.currentPageIndex <= 0)
+                    
+                    let total = max(1, viewModel.totalPagesInCurrentChapter)
+                    let current = viewModel.isScrubbingSlider ? Int(dragPageValue.rounded()) + 1 : viewModel.currentPageIndex + 1
+                    Text("\(min(current, total)) / \(total)")
+                        .font(.readerCounter)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.6))
+                        .clipShape(Capsule())
+                    
+                    Button(action: { viewModel.stepPage(forward: true) }) {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(viewModel.currentPageIndex < total - 1 ? .white : .textTertiary)
+                    }
+                    .disabled(viewModel.currentPageIndex >= total - 1)
+                }
                 
                 Spacer()
                 
                 Button(action: { viewModel.goToNextChapter() }) {
                     HStack(spacing: 4) {
-                        Text("Next")
+                        Text("Next Ch")
                         Image(systemName: "chevron.forward")
                     }
                     .font(.captionMedium)
@@ -140,14 +168,19 @@ public struct ReaderControlsOverlay: View {
             .padding(.horizontal, Theme.Spacing.xl)
             
             // Page Scrubber Slider
-            if viewModel.pages.count > 1 {
+            let maxPage = max(0, viewModel.totalPagesInCurrentChapter - 1)
+            if maxPage > 0 {
                 Slider(
-                    value: Binding(
-                        get: { Double(viewModel.currentPageIndex) },
-                        set: { viewModel.onPageChanged(to: Int($0)) }
-                    ),
-                    in: 0...Double(max(0, viewModel.pages.count - 1)),
-                    step: 1
+                    value: $dragPageValue,
+                    in: 0...Double(maxPage),
+                    step: 1,
+                    onEditingChanged: { editing in
+                        viewModel.isScrubbingSlider = editing
+                        if !editing {
+                            let target = Int(dragPageValue.rounded())
+                            viewModel.seekToPage(target)
+                        }
+                    }
                 )
                 .accentColor(.mangaAccent)
                 .padding(.horizontal, Theme.Spacing.xl)

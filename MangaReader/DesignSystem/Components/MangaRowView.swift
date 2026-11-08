@@ -58,7 +58,22 @@ public struct MangaRowView: View {
                     }
                 }
                 
-                if let author = manga.author {
+                if let chNum = manga.lastReadChapterNumber {
+                    HStack(spacing: 4) {
+                        Image(systemName: "book.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.mangaAccent)
+                        if let page = manga.lastReadPage, let total = manga.totalPages, total > 0 {
+                            Text("Ch. \(Int(chNum.rounded())) • Page \(page + 1)/\(total)")
+                                .font(.captionMedium)
+                                .foregroundColor(.mangaAccent)
+                        } else {
+                            Text("Ch. \(Int(chNum.rounded()))")
+                                .font(.captionMedium)
+                                .foregroundColor(.mangaAccent)
+                        }
+                    }
+                } else if let author = manga.author {
                     Text(author)
                         .font(.cardSubtitle)
                         .foregroundColor(.textSecondary)

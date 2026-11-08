@@ -21,16 +21,57 @@ public struct WebtoonReaderView: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: viewModel.settings.pageSpacing) {
-                    ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, url in
-                        WebtoonPageView(
-                            url: url,
-                            pageIndex: index,
-                            scaleType: viewModel.settings.imageScale,
-                            onVisible: {
-                                viewModel.onPageChanged(to: index)
+                    if !viewModel.chapterSegments.isEmpty {
+                        ForEach(Array(viewModel.chapterSegments.enumerated()), id: \.element.id) { segIndex, segment in
+                            if segIndex > 0 {
+                                chapterTransitionBanner(
+                                    previousTitle: viewModel.chapterSegments[segIndex - 1].chapter.displayTitle,
+                                    nextTitle: segment.chapter.displayTitle
+                                )
                             }
-                        )
-                        .id(index)
+                            
+                            ForEach(Array(segment.pageURLs.enumerated()), id: \.offset) { pageIndex, pageURL in
+                                let pageElementID = "\(segment.chapter.id.uuidString)_page_\(pageIndex)"
+                                
+                                WebtoonPageView(
+                                    url: pageURL,
+                                    pageIndex: pageIndex,
+                                    scaleType: viewModel.settings.imageScale,
+                                    onVisible: {
+                                        viewModel.onPageVisible(index: pageIndex, chapter: segment.chapter)
+                                        
+                                        // Prefetch next chapter when nearing the end of the current or latest segment
+                                        let isLatestSegment = segIndex == viewModel.chapterSegments.count - 1
+                                        let isNearEnd = pageIndex >= max(0, segment.pageURLs.count - 3)
+                                        if isLatestSegment && isNearEnd {
+                                            Task {
+                                                await viewModel.preloadNextChapterIfNeeded()
+                                            }
+                                        }
+                                    }
+                                )
+                                .id(pageElementID)
+                            }
+                        }
+                    } else {
+                        // Fallback to flat pages if segments haven't initialized
+                        ForEach(Array(viewModel.pages.enumerated()), id: \.offset) { index, url in
+                            let fallbackID = "\(viewModel.currentChapter.id.uuidString)_page_\(index)"
+                            WebtoonPageView(
+                                url: url,
+                                pageIndex: index,
+                                scaleType: viewModel.settings.imageScale,
+                                onVisible: {
+                                    viewModel.onPageVisible(index: index, chapter: viewModel.currentChapter)
+                                    if index >= max(0, viewModel.pages.count - 3) {
+                                        Task {
+                                            await viewModel.preloadNextChapterIfNeeded()
+                                        }
+                                    }
+                                }
+                            )
+                            .id(fallbackID)
+                        }
                     }
                 }
                 .padding(.horizontal, viewModel.settings.sidePadding)
@@ -56,11 +97,57 @@ public struct WebtoonReaderView: View {
                 viewModel.toggleControls()
             }
             .onAppear {
-                if viewModel.currentPageIndex > 0 && viewModel.currentPageIndex < viewModel.pages.count {
-                    proxy.scrollTo(viewModel.currentPageIndex, anchor: .top)
+                if let target = viewModel.scrollTargetPageID {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        proxy.scrollTo(target, anchor: .top)
+                    }
+                } else if viewModel.currentPageIndex > 0 {
+                    let pageID = "\(viewModel.currentChapter.id.uuidString)_page_\(viewModel.currentPageIndex)"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        proxy.scrollTo(pageID, anchor: .top)
+                    }
+                }
+            }
+            .onChange(of: viewModel.scrollTargetPageID) { targetId in
+                if let targetId = targetId {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(targetId, anchor: .top)
+                    }
                 }
             }
         }
+    }
+    
+    // MARK: - Chapter Transition Divider
+    
+    private func chapterTransitionBanner(previousTitle: String, nextTitle: String) -> some View {
+        VStack(spacing: 6) {
+            Divider().background(Color.white.opacity(0.15))
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.mangaGreen)
+                    .font(.caption)
+                Text("Completed \(previousTitle)")
+                    .font(.caption)
+                    .foregroundColor(.textTertiary)
+            }
+            HStack(spacing: 6) {
+                Text("Continuing to \(nextTitle)")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.mangaAccent)
+                Image(systemName: "arrow.down")
+                    .font(.caption)
+                    .foregroundColor(.mangaAccent)
+            }
+            Divider().background(Color.white.opacity(0.15))
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity)
+        .background(Color.surfaceSecondary.opacity(0.4))
+        .cornerRadius(Theme.CornerRadius.medium)
+        .padding(.vertical, 12)
     }
 }
 

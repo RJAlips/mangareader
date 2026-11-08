@@ -13,6 +13,12 @@ public struct ContinueReadingItem: Identifiable {
     public let manga: MangaItem
     public let chapter: ChapterItem
     public let progress: ReadingProgress
+    
+    public init(manga: MangaItem, chapter: ChapterItem, progress: ReadingProgress) {
+        self.manga = manga
+        self.chapter = chapter
+        self.progress = progress
+    }
 }
 
 public final class HistoryRepository: ObservableObject {
@@ -44,6 +50,15 @@ public final class HistoryRepository: ObservableObject {
                 self?.continueReadingItems = items
             }
             .store(in: &cancellables)
+    }
+    
+    public func readingProgress(for mangaID: UUID) -> ReadingProgress? {
+        return db.historyList.first(where: { $0.mangaID == mangaID })
+    }
+    
+    public func readingProgress(forMangaIdString idString: String) -> ReadingProgress? {
+        guard let uuid = UUID(uuidString: idString) else { return nil }
+        return readingProgress(for: uuid)
     }
     
     public func clearHistory() {

@@ -184,13 +184,13 @@ public final class SourceManager: ObservableObject {
         }
         
         // 1. MangaDex Special Handling
-        if cleanURLString.lowercased().contains("mangadex.org") {
+        if cleanURLString.lowercased().contains("mangadex") {
             let mangadex = MangaDexSource()
             register(source: mangadex)
             enabledSourceIDs.insert(mangadex.manifest.id)
             
             let dexURL = "https://api.mangadex.org"
-            if let idx = repositories.firstIndex(where: { $0.url.contains("mangadex.org") }) {
+            if let idx = repositories.firstIndex(where: { $0.url.contains("mangadex") }) {
                 repositories[idx].sourceCount = 1
             } else {
                 repositories.append(RepositoryInfo(name: "Official MangaDex", url: dexURL, sourceCount: 1))
@@ -222,7 +222,7 @@ public final class SourceManager: ObservableObject {
         }
         
         if let manifest = try? decoder.decode(RepositoryManifestDTO.self, from: data) {
-            repoName = manifest.name
+            repoName = manifest.name ?? url.host ?? "Custom Repository"
             for srcDTO in manifest.sources {
                 var resolvedIconURL: URL? = nil
                 if let iconStr = srcDTO.iconURL, !iconStr.isEmpty {
@@ -307,6 +307,28 @@ public final class SourceManager: ObservableObject {
             register(source: dynamicSource)
             enabledSourceIDs.insert(dynamicSource.manifest.id)
             addedCount = 1
+        } else if let htmlStr = String(data: data, encoding: .utf8), (htmlStr.lowercased().contains("<html") || htmlStr.lowercased().contains("<!doctype")) {
+            // User entered a direct website URL (e.g. Asura Scans, Aqua Manga)
+            let hostClean = (url.host ?? "Website").replacingOccurrences(of: "www.", with: "").capitalized
+            let siteSourceId = "com.mangareader.source.\(abs(cleanURLString.hashValue))"
+            let webSource = CommunityWebSource(
+                manifest: SourceManifest(
+                    id: siteSourceId,
+                    name: hostClean,
+                    version: "1.0",
+                    lang: "EN",
+                    iconURL: URL(string: "\(cleanURLString)/favicon.ico"),
+                    isEnabled: true,
+                    supportsLatest: true,
+                    supportsSearch: true,
+                    sourceDescription: "Community web source for \(hostClean)"
+                ),
+                baseURLString: cleanURLString
+            )
+            register(source: webSource)
+            enabledSourceIDs.insert(webSource.manifest.id)
+            addedCount = 1
+            repoName = hostClean
         } else {
             throw NSError(
                 domain: "RepositoryError",
@@ -712,7 +734,7 @@ public final class DynamicJSONSource: MangaSource, @unchecked Sendable {
 // MARK: - Repository DTOs
 
 private struct RepositoryManifestDTO: Decodable {
-    let name: String
+    let name: String?
     let sources: [RepositorySourceDTO]
 }
 

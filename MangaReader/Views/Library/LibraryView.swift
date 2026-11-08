@@ -14,6 +14,7 @@ public struct LibraryView: View {
     @State private var showFilterSheet = false
     @State private var showFileImporter = false
     @State private var importErrorMessage: String? = nil
+    @State private var activeReadingItem: ContinueReadingItem? = nil
     
     // Columns for Grids
     private let compactGridColumns = [
@@ -42,7 +43,7 @@ public struct LibraryView: View {
                 categoryBar
                 
                 // Content View
-                if viewModel.filteredManga.isEmpty {
+                if viewModel.filteredManga.isEmpty && viewModel.currentlyReadingItems.isEmpty {
                     emptyState
                 } else {
                     contentListOrGrid
@@ -55,6 +56,9 @@ public struct LibraryView: View {
             }
             .background(Color.appBackground.ignoresSafeArea())
             .navigationTitle("Library")
+            .onAppear {
+                viewModel.refresh()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if viewModel.isSelectionMode {
@@ -103,6 +107,13 @@ public struct LibraryView: View {
             .sheet(isPresented: $showFilterSheet) {
                 filterSheet
             }
+            .fullScreenCover(item: $activeReadingItem) { item in
+                ReaderContainerView(
+                    manga: item.manga,
+                    chapter: item.chapter,
+                    initialPage: item.progress.pageIndex
+                )
+            }
             .fileImporter(
                 isPresented: $showFileImporter,
                 allowedContentTypes: [.zip, .data],
@@ -113,6 +124,7 @@ public struct LibraryView: View {
                     guard let url = urls.first else { return }
                     do {
                         _ = try LocalLibraryScanner.shared.importFile(at: url)
+                        viewModel.refresh()
                     } catch {
                         self.importErrorMessage = error.localizedDescription
                     }
@@ -154,34 +166,131 @@ public struct LibraryView: View {
     @ViewBuilder
     private var contentListOrGrid: some View {
         ScrollView {
-            switch viewModel.displayMode {
-            case .compactGrid:
-                LazyVGrid(columns: compactGridColumns, spacing: Theme.Spacing.md) {
-                    ForEach(viewModel.filteredManga) { manga in
-                        mangaItemCell(manga: manga)
-                    }
+            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                // "Continue Reading" Shelf
+                if viewModel.searchQuery.isEmpty && !viewModel.isSelectionMode && !viewModel.currentlyReadingItems.isEmpty {
+                    continueReadingShelf
                 }
-                .padding(Theme.Spacing.lg)
                 
-            case .comfortableGrid:
-                LazyVGrid(columns: comfortableGridColumns, spacing: Theme.Spacing.lg) {
-                    ForEach(viewModel.filteredManga) { manga in
-                        mangaItemCell(manga: manga)
+                // Library Manga View
+                switch viewModel.displayMode {
+                case .compactGrid:
+                    LazyVGrid(columns: compactGridColumns, spacing: Theme.Spacing.md) {
+                        ForEach(viewModel.filteredManga) { manga in
+                            mangaItemCell(manga: manga)
+                        }
                     }
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    
+                case .comfortableGrid:
+                    LazyVGrid(columns: comfortableGridColumns, spacing: Theme.Spacing.lg) {
+                        ForEach(viewModel.filteredManga) { manga in
+                            mangaItemCell(manga: manga)
+                        }
+                    }
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    
+                case .list:
+                    LazyVStack(spacing: Theme.Spacing.xs) {
+                        ForEach(viewModel.filteredManga) { manga in
+                            mangaRowCell(manga: manga)
+                            Divider().background(Color.borderSubtle)
+                        }
+                    }
+                    .padding(.horizontal, Theme.Spacing.lg)
                 }
-                .padding(Theme.Spacing.lg)
-                
-            case .list:
-                LazyVStack(spacing: Theme.Spacing.xs) {
-                    ForEach(viewModel.filteredManga) { manga in
-                        mangaRowCell(manga: manga)
-                        Divider().background(Color.borderSubtle)
+            }
+            .padding(.vertical, Theme.Spacing.sm)
+        }
+    }
+    
+    // MARK: - Continue Reading Shelf
+    
+    private var continueReadingShelf: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "book.fill")
+                    .font(.caption)
+                    .foregroundColor(.mangaAccent)
+                Text("Continue Reading")
+                    .font(.bodyEmphasized)
+                    .foregroundColor(.textPrimary)
+                Spacer()
+                Text("\(viewModel.currentlyReadingItems.count)")
+                    .font(.caption)
+                    .foregroundColor(.textTertiary)
+            }
+            .padding(.horizontal, Theme.Spacing.lg)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(viewModel.currentlyReadingItems) { item in
+                        continueReadingCard(for: item)
                     }
                 }
                 .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.top, Theme.Spacing.sm)
             }
         }
+        .padding(.bottom, 6)
+    }
+    
+    private func continueReadingCard(for item: ContinueReadingItem) -> some View {
+        Button {
+            activeReadingItem = item
+        } label: {
+            HStack(spacing: 10) {
+                AsyncMangaImage(
+                    url: item.manga.coverURL,
+                    contentMode: .fill,
+                    cornerRadius: Theme.CornerRadius.small,
+                    showShimmer: false
+                )
+                .frame(width: 55, height: 78)
+                .clipped()
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.manga.title)
+                        .font(.cardTitle)
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                    
+                    Text(item.chapter.displayTitle)
+                        .font(.cardSubtitle)
+                        .foregroundColor(.mangaAccent)
+                        .lineLimit(1)
+                    
+                    let pageCount = max(1, item.progress.pageCount)
+                    let currentPage = item.progress.pageIndex + 1
+                    Text("Page \(currentPage) of \(pageCount)")
+                        .font(.caption)
+                        .foregroundColor(.textSecondary)
+                    
+                    // Linear progress track
+                    let progressFraction = min(1.0, max(0.0, Double(currentPage) / Double(pageCount)))
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.surfaceSecondary)
+                                .frame(height: 4)
+                            Capsule()
+                                .fill(Color.mangaAccent)
+                                .frame(width: geo.size.width * CGFloat(progressFraction), height: 4)
+                        }
+                    }
+                    .frame(height: 4)
+                    .padding(.top, 2)
+                }
+                .frame(width: 140, alignment: .leading)
+            }
+            .padding(8)
+            .background(Color.surfacePrimary)
+            .cornerRadius(Theme.CornerRadius.medium)
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.CornerRadius.medium)
+                    .stroke(Color.borderSubtle, lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
     
     @ViewBuilder

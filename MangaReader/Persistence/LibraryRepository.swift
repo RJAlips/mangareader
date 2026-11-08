@@ -120,4 +120,13 @@ public final class LibraryRepository: ObservableObject {
             }
         }
     }
+    
+    public func getManga(by id: UUID) -> MangaItem? {
+        return db.mangaList.first(where: { $0.id == id })
+    }
+    
+    public func getManga(by idString: String) -> MangaItem? {
+        guard let uuid = UUID(uuidString: idString) else { return nil }
+        return getManga(by: uuid)
+    }
 }

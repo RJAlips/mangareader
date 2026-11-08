@@ -12,8 +12,8 @@ public struct ReaderContainerView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: ReaderViewModel
     
-    public init(manga: MangaItem, chapter: ChapterItem) {
-        self._viewModel = StateObject(wrappedValue: ReaderViewModel(manga: manga, chapter: chapter))
+    public init(manga: MangaItem, chapter: ChapterItem, initialPage: Int? = nil) {
+        self._viewModel = StateObject(wrappedValue: ReaderViewModel(manga: manga, chapter: chapter, initialPage: initialPage))
     }
     
     public var body: some View {

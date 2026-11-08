@@ -74,6 +74,27 @@ public struct MangaCardView: View {
                     .padding(Theme.Spacing.xs)
                     
                     Spacer()
+                    
+                    // Reading Progress Badge
+                    if let chNum = manga.lastReadChapterNumber {
+                        HStack(spacing: 3) {
+                            Image(systemName: "book.fill")
+                                .font(.system(size: 8))
+                            if let page = manga.lastReadPage, let total = manga.totalPages, total > 0 {
+                                Text("Ch. \(Int(chNum.rounded())) • \(page + 1)/\(total)")
+                                    .font(.system(size: 9, weight: .bold))
+                            } else {
+                                Text("Ch. \(Int(chNum.rounded()))")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.black.opacity(0.75))
+                        .clipShape(Capsule())
+                        .padding(6)
+                    }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.card, style: .continuous))

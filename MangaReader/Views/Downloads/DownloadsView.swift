@@ -122,6 +122,7 @@ public struct DownloadsView: View {
 public struct MangaDownloadDetailView: View {
     public let manga: MangaItem
     @ObservedObject public var viewModel: DownloadsViewModel
+    @State private var readingChapter: ChapterItem? = nil
     
     public init(manga: MangaItem, viewModel: DownloadsViewModel) {
         self.manga = manga
@@ -137,6 +138,9 @@ public struct MangaDownloadDetailView: View {
         .listStyle(InsetGroupedListStyle())
         .navigationTitle(manga.title)
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(item: $readingChapter) { ch in
+            ReaderContainerView(manga: manga, chapter: ch)
+        }
     }
     
     // MARK: - Section 1: In Progress / Queued
@@ -163,14 +167,19 @@ public struct MangaDownloadDetailView: View {
                     .foregroundColor(.textTertiary)
             } else {
                 ForEach(downloaded) { chapter in
-                    downloadedChapterRow(chapter: chapter)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                viewModel.deleteChapter(chapter)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
+                    Button {
+                        readingChapter = chapter
+                    } label: {
+                        downloadedChapterRow(chapter: chapter)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            viewModel.deleteChapter(chapter)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
+                    }
                 }
             }
         }
@@ -249,9 +258,14 @@ public struct MangaDownloadDetailView: View {
     private func downloadedChapterRow(chapter: ChapterItem) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(chapter.displayTitle)
-                    .font(.bodyMedium)
-                    .foregroundColor(.textPrimary)
+                HStack(spacing: 6) {
+                    Text(chapter.displayTitle)
+                        .font(.bodyMedium)
+                        .foregroundColor(.textPrimary)
+                    Image(systemName: "book.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(.mangaAccent)
+                }
                 
                 Text(viewModel.chapterFileSize(chapter, sourceID: manga.sourceID))
                     .font(.captionMedium)
@@ -265,6 +279,7 @@ public struct MangaDownloadDetailView: View {
                 .font(.system(size: 16))
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
     
     // Not Downloaded Row

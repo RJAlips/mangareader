@@ -39,8 +39,12 @@ public final class LibraryViewModel: ObservableObject {
     // Categories
     @Published public private(set) var categories: [CategoryItem] = []
     
+    // Continue Reading Shelf
+    @Published public private(set) var currentlyReadingItems: [ContinueReadingItem] = []
+    
     private let repo = LibraryRepository.shared
     private let db = DatabaseManager.shared
+    private let historyRepo = HistoryRepository.shared
     private var cancellables = Set<AnyCancellable>()
 
     /// Incremented every time the library data changes so SwiftUI re-evaluates
@@ -55,9 +59,15 @@ public final class LibraryViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Observe Continue Reading Items from History
+        historyRepo.$continueReadingItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] items in
+                self?.currentlyReadingItems = items
+            }
+            .store(in: &cancellables)
+
         // Whenever the underlying library list changes, bump the version counter.
-        // Any view that accesses `filteredManga` will re-render because a
-        // @Published property on this @MainActor ObservableObject changed.
         repo.$libraryItems
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -66,8 +76,6 @@ public final class LibraryViewModel: ObservableObject {
             .store(in: &cancellables)
 
         // Also observe filter/sort knobs so the computed property stays fresh.
-        // Note: Publishers.MergeMany requires homogeneous types so we subscribe
-        // to each @Published property individually using eraseToAnyPublisher().
         let filterPublishers: [AnyPublisher<Void, Never>] = [
             $selectedCategory.map { _ in () }.eraseToAnyPublisher(),
             $searchQuery.map { _ in () }.eraseToAnyPublisher(),
@@ -95,6 +103,11 @@ public final class LibraryViewModel: ObservableObject {
             unreadOnly: unreadOnly,
             downloadedOnly: downloadedOnly
         )
+    }
+    
+    public func refresh() {
+        db.reloadFromDisk()
+        libraryVersion &+= 1
     }
     
     public func toggleSelection(for id: UUID) {

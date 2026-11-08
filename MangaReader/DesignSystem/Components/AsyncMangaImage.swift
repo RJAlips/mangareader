@@ -102,9 +102,10 @@ public struct AsyncMangaImage: View {
             return
         }
         
-        // 1. Check local file if file:// scheme or Documents/Downloads (local-first rendering)
-        if url.isFileURL || url.scheme == "file" || url.path.contains("Downloads/") {
-            let path = url.isFileURL ? url.path : url.absoluteString
+        // 1. Check local file if file:// scheme or local path (local-first rendering)
+        let urlStr = url.absoluteString
+        if url.isFileURL || url.scheme == "file" || urlStr.hasPrefix("file://") || urlStr.hasPrefix("/") || url.path.contains("Downloads/") {
+            let path = url.isFileURL ? url.path : (urlStr.hasPrefix("file://") ? String(urlStr.dropFirst(7)) : urlStr)
             if let img = UIImage(contentsOfFile: path) ?? (try? Data(contentsOf: url)).flatMap({ UIImage(data: $0) }) {
                 self.loadedImage = img
                 return

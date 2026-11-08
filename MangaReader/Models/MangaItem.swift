@@ -47,6 +47,8 @@ public struct MangaItem: Identifiable, Codable, Hashable {
     public var lastReadChapterID: UUID?
     public var lastReadChapterNumber: Double?
     public var lastReadChapterTitle: String?
+    public var lastReadPage: Int?
+    public var totalPages: Int?
     public var lastUpdated: Date
     public var preferredReadingMode: ReadingMode?
     public var customCoverLocalPath: String?
@@ -68,11 +70,13 @@ public struct MangaItem: Identifiable, Codable, Hashable {
         unreadCount: Int = 0,
         inLibrary: Bool = false,
         isFavorite: Bool = false,
-        categories: [String] = ["Default"],
+        categories: [String] = [],
         lastReadAt: Date? = nil,
         lastReadChapterID: UUID? = nil,
         lastReadChapterNumber: Double? = nil,
         lastReadChapterTitle: String? = nil,
+        lastReadPage: Int? = nil,
+        totalPages: Int? = nil,
         lastUpdated: Date = Date(),
         preferredReadingMode: ReadingMode? = nil,
         customCoverLocalPath: String? = nil
@@ -98,6 +102,8 @@ public struct MangaItem: Identifiable, Codable, Hashable {
         self.lastReadChapterID = lastReadChapterID
         self.lastReadChapterNumber = lastReadChapterNumber
         self.lastReadChapterTitle = lastReadChapterTitle
+        self.lastReadPage = lastReadPage
+        self.totalPages = totalPages
         self.lastUpdated = lastUpdated
         self.preferredReadingMode = preferredReadingMode
         self.customCoverLocalPath = customCoverLocalPath

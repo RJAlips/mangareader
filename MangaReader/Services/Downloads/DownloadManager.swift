@@ -27,24 +27,51 @@ public final class LocalStorageManager: @unchecked Sendable {
     }
     
     public func getRelativePath(sourceID: String, mangaID: UUID, chapterID: UUID) -> String {
-        return "Downloads/\(sourceID)/\(mangaID.uuidString)/\(chapterID.uuidString)/"
+        return "Downloads/\(mangaID.uuidString)/\(chapterID.uuidString)/"
+    }
+    
+    public func getLocalChapterPageURLs(mangaId: String, chapterId: String) -> [String]? {
+        let cleanM = mangaId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanC = chapterId.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let rootDownloads = documentsDirectory.appendingPathComponent("Downloads")
+        
+        // 1. Primary path: Documents/Downloads/{mangaId}/{chapterId}
+        let directDir = rootDownloads.appendingPathComponent(cleanM).appendingPathComponent(cleanC)
+        if let files = scanImages(in: directDir), !files.isEmpty {
+            return files.map { $0.absoluteString }
+        }
+        
+        // 2. Secondary path: check nested source directories Documents/Downloads/*/{mangaId}/{chapterId}
+        if let sourceDirs = try? fileManager.contentsOfDirectory(at: rootDownloads, includingPropertiesForKeys: nil) {
+            for sDir in sourceDirs {
+                let candidate = sDir.appendingPathComponent(cleanM).appendingPathComponent(cleanC)
+                if let files = scanImages(in: candidate), !files.isEmpty {
+                    return files.map { $0.absoluteString }
+                }
+            }
+        }
+        return nil
+    }
+    
+    private func scanImages(in directory: URL) -> [URL]? {
+        guard fileManager.fileExists(atPath: directory.path) else { return nil }
+        guard let files = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return nil }
+        let imageFiles = files
+            .filter { ["jpg", "jpeg", "png", "webp", "gif"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        return imageFiles.isEmpty ? nil : imageFiles
     }
     
     public func getLocalPages(for chapter: ChapterItem, sourceID: String? = nil) -> [URL]? {
         var candidateDirs: [URL] = []
         
-        // 1. Strictly relative stored path: Downloads/{sourceId}/{mangaId}/{chapterId}/
+        // 1. Strictly relative stored path
         if let rel = chapter.localDirectoryPath, !rel.isEmpty {
             candidateDirs.append(resolveURL(for: rel))
         }
         
-        // 2. Computed standard relative pattern
-        if let sID = sourceID {
-            let standardRel = getRelativePath(sourceID: sID, mangaID: chapter.mangaID, chapterID: chapter.id)
-            candidateDirs.append(resolveURL(for: standardRel))
-        }
-        
-        // 3. Fallback without source ID: Downloads/{mangaId}/{chapterId}/
+        // 2. Standard pattern: Downloads/{mangaId}/{chapterId}/
         candidateDirs.append(
             documentsDirectory
                 .appendingPathComponent("Downloads")
@@ -52,15 +79,20 @@ public final class LocalStorageManager: @unchecked Sendable {
                 .appendingPathComponent(chapter.id.uuidString)
         )
         
+        // 3. Computed standard relative pattern with sourceID: Downloads/{sourceId}/{mangaId}/{chapterId}/
+        if let sID = sourceID {
+            candidateDirs.append(
+                documentsDirectory
+                    .appendingPathComponent("Downloads")
+                    .appendingPathComponent(sID)
+                    .appendingPathComponent(chapter.mangaID.uuidString)
+                    .appendingPathComponent(chapter.id.uuidString)
+            )
+        }
+        
         for dir in candidateDirs {
-            if fileManager.fileExists(atPath: dir.path),
-               let files = try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-                let imageFiles = files
-                    .filter { ["jpg", "jpeg", "png", "webp", "gif"].contains($0.pathExtension.lowercased()) }
-                    .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-                if !imageFiles.isEmpty {
-                    return imageFiles
-                }
+            if let files = scanImages(in: dir), !files.isEmpty {
+                return files
             }
         }
         return nil
@@ -71,7 +103,7 @@ public final class LocalStorageManager: @unchecked Sendable {
     }
     
     public func getLocalImage(for url: URL) -> UIImage? {
-        guard url.isFileURL else { return nil }
+        guard url.isFileURL || url.scheme == "file" else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
     
@@ -119,6 +151,14 @@ public final class DownloadManager: ObservableObject {
         
         startNetworkMonitoring()
         updateTotalStorageUsage()
+    }
+    
+    public func getLocalChapterPageURLs(mangaId: String, chapterId: String) -> [String]? {
+        return LocalStorageManager.shared.getLocalChapterPageURLs(mangaId: mangaId, chapterId: chapterId)
+    }
+    
+    public func getLocalChapterPageURLs(mangaId: UUID, chapterId: UUID) -> [String]? {
+        return getLocalChapterPageURLs(mangaId: mangaId.uuidString, chapterId: chapterId.uuidString)
     }
     
     private func startNetworkMonitoring() {
@@ -216,13 +256,13 @@ public final class DownloadManager: ObservableObject {
     }
     
     public func deleteDownloadedChapter(_ chapter: ChapterItem) {
-        // Resolve sandbox relative directory
+        // Remove from disk
+        let directDir = LocalStorageManager.shared.resolveURL(for: "Downloads/\(chapter.mangaID.uuidString)/\(chapter.id.uuidString)")
+        try? fileManager.removeItem(at: directDir)
+        
         if let rel = chapter.localDirectoryPath, !rel.isEmpty {
-            let chapterDir = LocalStorageManager.shared.resolveURL(for: rel)
-            try? fileManager.removeItem(at: chapterDir)
-        } else {
-            let fallbackDir = LocalStorageManager.shared.resolveURL(for: "Downloads/\(chapter.mangaID.uuidString)/\(chapter.id.uuidString)")
-            try? fileManager.removeItem(at: fallbackDir)
+            let relDir = LocalStorageManager.shared.resolveURL(for: rel)
+            try? fileManager.removeItem(at: relDir)
         }
         
         // Update database
@@ -269,12 +309,8 @@ public final class DownloadManager: ObservableObject {
         guard let taskIndex = tasks.firstIndex(where: { $0.id == task.id }) else { return }
         tasks[taskIndex].status = .downloading(progress: 0.0)
         
-        // Sandboxed relative path: Downloads/{sourceId}/{mangaId}/{chapterId}/
-        let relativePath = LocalStorageManager.shared.getRelativePath(
-            sourceID: task.manga.sourceID,
-            mangaID: task.manga.id,
-            chapterID: task.chapter.id
-        )
+        // Sandboxed relative path: Documents/Downloads/{mangaId}/{chapterId}/
+        let relativePath = "Downloads/\(task.manga.id.uuidString)/\(task.chapter.id.uuidString)/"
         let chapterDir = LocalStorageManager.shared.resolveURL(for: relativePath)
         try? fileManager.createDirectory(at: chapterDir, withIntermediateDirectories: true)
         

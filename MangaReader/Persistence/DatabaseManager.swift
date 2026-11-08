@@ -365,6 +365,8 @@ public final class DatabaseManager: ObservableObject {
             mangaList[mIdx].lastReadChapterID = chapter.id
             mangaList[mIdx].lastReadChapterNumber = chapter.chapterNumber
             mangaList[mIdx].lastReadChapterTitle = chapter.displayTitle
+            mangaList[mIdx].lastReadPage = pageIndex
+            mangaList[mIdx].totalPages = max(chapter.pageCount, 1)
         }
 
         // 3. Update Progress History
