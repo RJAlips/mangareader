@@ -27,6 +27,59 @@ public enum NetworkError: LocalizedError {
     }
 }
 
+/// Resolves relative / scheme-relative / absolute URLs against a base URL.
+///
+/// Source repositories (Aidoku-style indexes, Komga, custom JSON feeds) frequently
+/// return cover-image paths as relative strings such as `"/covers/abc.jpg"`,
+/// `"covers/abc.jpg"`, or `"//cdn.example.com/img/512.jpg"`. Passing these
+/// directly to `URL(string:)` produces an invalid URL (no scheme / host) which
+/// `URLSession` cannot fetch, and which the image cache keys incorrectly —
+/// resulting in blank thumbnails in the browsing grid.
+///
+/// This helper normalises every variant into a fully-qualified absolute URL so
+/// the downstream image pipeline (cache key, request, Referer derivation) always
+/// operates on a stable, fetchable URL.
+public enum URLResolver {
+
+    /// Returns `nil` when the input is empty or cannot be resolved.
+    public static func resolve(_ string: String?, relativeTo base: URL?) -> URL? {
+        guard let string = string?.trimmingCharacters(in: .whitespacesAndNewlines), !string.isEmpty else {
+            return nil
+        }
+
+        let cleanString = string.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? string
+
+        // Already an absolute URL with a scheme — use as-is.
+        if let url = URL(string: cleanString), url.scheme != nil, url.host != nil {
+            return url
+        }
+
+        // Scheme-relative: "//cdn.example.com/img.jpg" -> inherit scheme from base or default https.
+        if string.hasPrefix("//") {
+            let scheme = base?.scheme ?? "https"
+            if let resolved = URL(string: "\(scheme):\(cleanString)") {
+                return resolved
+            }
+        }
+
+        // Relative path or absolute path against base URL
+        if let base = base {
+            if let resolved = URL(string: cleanString, relativeTo: base) {
+                return resolved.absoluteURL
+            }
+        }
+
+        // Last resort: try plain parse
+        return URL(string: cleanString) ?? URL(string: string)
+    }
+
+    /// Convenience: resolve against the repository's own base URL string.
+    public static func resolveCoverURL(_ string: String?, repositoryURL: String?) -> URL? {
+        let base = repositoryURL.flatMap { URL(string: $0) }
+        return resolve(string, relativeTo: base)
+    }
+}
+
 public actor NetworkClient {
     public static let shared = NetworkClient()
     
@@ -50,22 +103,23 @@ public actor NetworkClient {
         headers?.forEach { request.setValue($1, forHTTPHeaderField: $0) }
         
         let (data, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.noData
+        guard let http = response as? HTTPURLResponse else {
+            throw NetworkError.badServerResponse(statusCode: 500)
         }
         
-        if httpResponse.statusCode == 429 {
-            throw NetworkError.rateLimited
-        } else if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-            throw NetworkError.unauthorized
-        } else if !(200...299).contains(httpResponse.statusCode) {
-            throw NetworkError.badServerResponse(statusCode: httpResponse.statusCode)
+        guard (200...299).contains(http.statusCode) else {
+            if http.statusCode == 429 {
+                throw NetworkError.rateLimited
+            } else if http.statusCode == 401 || http.statusCode == 403 {
+                throw NetworkError.unauthorized
+            }
+            throw NetworkError.badServerResponse(statusCode: http.statusCode)
         }
         
         do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode(T.self, from: data)
+            return try decoder.decode(type, from: data)
         } catch {
             throw NetworkError.decodingError(error)
         }
@@ -97,9 +151,14 @@ public actor NetworkClient {
     ) async throws -> Data {
         var requestHeaders = headers ?? [:]
 
-        // User-Agent — fall back to a desktop Safari UA (CDNs often gate on this).
+        // User-Agent: MangaDex CDN requires dedicated UA, other CDNs require Mobile Safari.
         if requestHeaders["User-Agent"] == nil {
-            requestHeaders["User-Agent"] = defaultUserAgent
+            let host = url.host?.lowercased() ?? ""
+            if host.contains("mangadex.org") {
+                requestHeaders["User-Agent"] = "MangaReader/1.0.0 (iOS; Apple; CFNetwork)"
+            } else {
+                requestHeaders["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+            }
         }
 
         // Referer — default to the image's own origin so CDNs that check Referer
