@@ -56,6 +56,7 @@ public struct AsyncMangaImage: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
+                    .clipped()
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
             } else if hasFailed {
                 ZStack {

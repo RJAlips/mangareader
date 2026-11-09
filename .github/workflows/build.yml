@@ -82,13 +82,35 @@ jobs:
             echo "Installing $SIM_APP to virtual simulator..."
             xcrun simctl install "$DEVICE_ID" "$SIM_APP"
 
-            echo "Launching MangaReader virtually..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.app || true
-            sleep 6
+            echo "Capturing 01_Virtual_Library_Tab..."
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=library || true
+            sleep 4
+            xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Tab.png
+            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
 
-            # Capture Virtual Screen
-            xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Screen.png
-            echo "Screenshot saved to screenshots/01_Virtual_Library_Screen.png"
+            echo "Capturing 02_Virtual_Browse_Tab..."
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=browse || true
+            sleep 4
+            xcrun simctl io "$DEVICE_ID" screenshot screenshots/02_Virtual_Browse_Tab.png
+            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+
+            echo "Capturing 03_Virtual_Updates_Tab..."
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=updates || true
+            sleep 3
+            xcrun simctl io "$DEVICE_ID" screenshot screenshots/03_Virtual_Updates_Tab.png
+            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+
+            echo "Capturing 04_Virtual_History_Tab..."
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=history || true
+            sleep 3
+            xcrun simctl io "$DEVICE_ID" screenshot screenshots/04_Virtual_History_Tab.png
+            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+
+            echo "Capturing 05_Virtual_More_Tab..."
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=more || true
+            sleep 3
+            xcrun simctl io "$DEVICE_ID" screenshot screenshots/05_Virtual_More_Tab.png
+            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
           fi
 
       # 3. Virtual Unit & Logic Integration Tests

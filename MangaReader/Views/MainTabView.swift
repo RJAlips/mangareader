@@ -35,11 +35,30 @@ public enum AppTab: Int, CaseIterable, Identifiable {
         case .more: return "gearshape.fill"
         }
     }
+    
+    public static func from(string: String) -> AppTab? {
+        switch string.lowercased() {
+        case "library", "0": return .library
+        case "updates", "1": return .updates
+        case "browse", "sources", "2": return .browse
+        case "history", "3": return .history
+        case "more", "settings", "4": return .more
+        default: return nil
+        }
+    }
 }
 
 public struct MainTabView: View {
     @ObservedObject private var appState = AppState.shared
-    @State private var selectedTab: AppTab = .library
+    @State private var selectedTab: AppTab = {
+        if let tabArg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--tab=") }) {
+            let tabName = String(tabArg.dropFirst(6))
+            if let tab = AppTab.from(string: tabName) {
+                return tab
+            }
+        }
+        return .library
+    }()
     
     public init() {}
     
