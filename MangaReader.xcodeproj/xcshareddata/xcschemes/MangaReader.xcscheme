@@ -28,6 +28,26 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "0E455F879C0C04451F4FB5B6"
+               BuildableName = "MangaReaderTests.xctest"
+               BlueprintName = "MangaReaderTests"
+               ReferencedContainer = "container:MangaReader.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "16BEB4466A779CB962980969"
+               BuildableName = "MangaReaderUITests.xctest"
+               BlueprintName = "MangaReaderUITests"
+               ReferencedContainer = "container:MangaReader.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

@@ -13,30 +13,62 @@ final class NavigationUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testTabBarNavigation() throws {
+    func testTabBarNavigationAndScreenshots() throws {
         let app = XCUIApplication()
         app.launch()
         
-        let libraryTab = app.buttons["Library"]
-        let updatesTab = app.buttons["Updates"]
-        let browseTab = app.buttons["Browse"]
-        let historyTab = app.buttons["History"]
-        let moreTab = app.buttons["More"]
+        // Wait for UI to settle
+        _ = app.wait(for: .runningForeground, timeout: 5)
         
-        if libraryTab.exists {
-            XCTAssertTrue(libraryTab.exists)
-            if updatesTab.exists {
-                updatesTab.tap()
-            }
-            if browseTab.exists {
-                browseTab.tap()
-            }
-            if historyTab.exists {
-                historyTab.tap()
-            }
-            if moreTab.exists {
-                moreTab.tap()
+        // 1. Library Screen
+        saveScreenshot(name: "01_Library_Tab", app: app)
+        
+        // 2. Browse Screen (Sources)
+        let browseTab = app.buttons["Browse"]
+        if browseTab.waitForExistence(timeout: 5) {
+            browseTab.tap()
+            _ = app.wait(for: .runningForeground, timeout: 2)
+            saveScreenshot(name: "02_Browse_Sources", app: app)
+            
+            // 3. Extensions Segment
+            let extensionsSegment = app.buttons["Extensions"]
+            if extensionsSegment.waitForExistence(timeout: 3) {
+                extensionsSegment.tap()
+                _ = app.wait(for: .runningForeground, timeout: 2)
+                saveScreenshot(name: "03_Browse_Extensions", app: app)
             }
         }
+        
+        // 4. Updates Screen
+        let updatesTab = app.buttons["Updates"]
+        if updatesTab.waitForExistence(timeout: 3) {
+            updatesTab.tap()
+            _ = app.wait(for: .runningForeground, timeout: 2)
+            saveScreenshot(name: "04_Updates_Tab", app: app)
+        }
+        
+        // 5. History Screen
+        let historyTab = app.buttons["History"]
+        if historyTab.waitForExistence(timeout: 3) {
+            historyTab.tap()
+            _ = app.wait(for: .runningForeground, timeout: 2)
+            saveScreenshot(name: "05_History_Tab", app: app)
+        }
+        
+        // 6. More / Settings Screen
+        let moreTab = app.buttons["More"]
+        if moreTab.waitForExistence(timeout: 3) {
+            moreTab.tap()
+            _ = app.wait(for: .runningForeground, timeout: 2)
+            saveScreenshot(name: "06_More_Settings", app: app)
+        }
+    }
+    
+    private func saveScreenshot(name: String, app: XCUIApplication) {
+        let screenshot = app.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }
