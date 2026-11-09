@@ -13,7 +13,7 @@ public final class AppState: ObservableObject {
     
     @Published public var activeReadingManga: MangaItem? = nil
     @Published public var activeReadingChapter: ChapterItem? = nil
-    @Published public var pendingExtensionUpdatesCount: Int = 2
+    @Published public var pendingExtensionUpdatesCount: Int = 0
     
     // Appearance & Customization Settings
     @AppStorage("pureBlackDarkMode") public var pureBlackDarkMode: Bool = false
@@ -32,7 +32,17 @@ public final class AppState: ObservableObject {
         pureBlackDarkMode ? Color.black : Color.appBackground
     }
     
+    private var cancellables = Set<AnyCancellable>()
+    
     private init() {
+        SourceManager.shared.$pendingUpdates
+            .receive(on: DispatchQueue.main)
+            .map(\.count)
+            .sink { [weak self] count in
+                self?.pendingExtensionUpdatesCount = count
+            }
+            .store(in: &cancellables)
+            
         bootstrapSampleDataIfNeeded()
     }
     

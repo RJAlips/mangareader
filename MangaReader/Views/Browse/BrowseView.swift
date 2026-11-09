@@ -126,6 +126,9 @@ public struct BrowseView: View {
             .sheet(isPresented: $showRepositorySheet) {
                 RepositoryManagementSheet(viewModel: viewModel)
             }
+            .task {
+                await viewModel.refreshSourcesFromRepos(force: false)
+            }
         }
     }
     
@@ -145,8 +148,8 @@ public struct BrowseView: View {
                             .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                             .foregroundColor(isSelected ? .textPrimary : .textSecondary)
                         
-                        if seg == .extensions && appState.pendingExtensionUpdatesCount > 0 {
-                            Text("\(appState.pendingExtensionUpdatesCount)")
+                        if seg == .extensions && !viewModel.pendingUpdates.isEmpty {
+                            Text("\(viewModel.pendingUpdates.count)")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 5)
@@ -205,6 +208,9 @@ public struct BrowseView: View {
             .padding(.top, 4)
             .padding(.bottom, 80)
         }
+        .refreshable {
+            await viewModel.refreshSourcesFromRepos(force: true)
+        }
     }
     
     private func sourceSection(title: String, sources: [any MangaSource]) -> some View {
@@ -233,50 +239,53 @@ public struct BrowseView: View {
     }
     
     private func sourceRow(source: any MangaSource) -> some View {
-        HStack(spacing: 12) {
-            // Source Icon
-            AsyncMangaImage(
-                url: source.manifest.iconURL,
-                contentMode: .fit,
-                cornerRadius: 8
-            )
-            .frame(width: 40, height: 40)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(source.manifest.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.textPrimary)
+        NavigationLink(destination: SourceDetailView(source: source)) {
+            HStack(spacing: 12) {
+                // Source Icon
+                AsyncMangaImage(
+                    url: source.manifest.iconURL,
+                    contentMode: .fit,
+                    cornerRadius: 8
+                )
+                .frame(width: 40, height: 40)
                 
-                Text(source.manifest.lang.uppercased())
-                    .font(.system(size: 11))
-                    .foregroundColor(.textSecondary)
-            }
-            
-            Spacer()
-            
-            // Action Buttons: Pin, Detail
-            HStack(spacing: 14) {
-                Button {
-                    if pinnedSourceIDs.contains(source.manifest.id) {
-                        pinnedSourceIDs.remove(source.manifest.id)
-                    } else {
-                        pinnedSourceIDs.insert(source.manifest.id)
-                    }
-                } label: {
-                    Image(systemName: pinnedSourceIDs.contains(source.manifest.id) ? "pin.fill" : "pin")
-                        .font(.system(size: 13))
-                        .foregroundColor(pinnedSourceIDs.contains(source.manifest.id) ? .mangaAccent : .textTertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(source.manifest.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                    
+                    Text(source.manifest.lang.uppercased())
+                        .font(.system(size: 11))
+                        .foregroundColor(.textSecondary)
                 }
                 
-                NavigationLink(destination: SourceDetailView(source: source)) {
+                Spacer()
+                
+                // Action Buttons: Pin, Chevron
+                HStack(spacing: 14) {
+                    Button {
+                        if pinnedSourceIDs.contains(source.manifest.id) {
+                            pinnedSourceIDs.remove(source.manifest.id)
+                        } else {
+                            pinnedSourceIDs.insert(source.manifest.id)
+                        }
+                    } label: {
+                        Image(systemName: pinnedSourceIDs.contains(source.manifest.id) ? "pin.fill" : "pin")
+                            .font(.system(size: 13))
+                            .foregroundColor(pinnedSourceIDs.contains(source.manifest.id) ? .mangaAccent : .textTertiary)
+                    }
+                    .buttonStyle(.borderless)
+                    
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.textTertiary)
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .buttonStyle(.plain)
     }
     
     // MARK: - Extensions Segment
@@ -285,20 +294,16 @@ public struct BrowseView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 // Updates Pending Section
-                if appState.pendingExtensionUpdatesCount > 0 {
+                if !viewModel.pendingUpdates.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Updates pending (\(appState.pendingExtensionUpdatesCount))")
+                            Text("Updates pending (\(viewModel.pendingUpdates.count))")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(.textSecondary)
                             Spacer()
                             Button("Update All") {
-                                for src in viewModel.sources {
-                                    updatingExtensionIDs.insert(src.manifest.id)
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                                    updatingExtensionIDs.removeAll()
-                                    appState.pendingExtensionUpdatesCount = 0
+                                Task {
+                                    await viewModel.updateAllSources()
                                 }
                             }
                             .font(.system(size: 12, weight: .bold))
@@ -307,8 +312,12 @@ public struct BrowseView: View {
                         .padding(.horizontal, 4)
                         
                         VStack(spacing: 0) {
-                            ForEach(Array(viewModel.sources.prefix(appState.pendingExtensionUpdatesCount)), id: \.manifest.id) { src in
-                                pendingExtensionRow(source: src)
+                            ForEach(Array(viewModel.pendingUpdates.enumerated()), id: \.element.id) { index, manifest in
+                                pendingExtensionRow(manifest: manifest)
+                                if index < viewModel.pendingUpdates.count - 1 {
+                                    Divider().background(Color.white.opacity(0.06))
+                                        .padding(.leading, 56)
+                                }
                             }
                         }
                         .background(Color.surfacePrimary)
@@ -343,39 +352,68 @@ public struct BrowseView: View {
                             .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
                     )
                 }
+                
+                // Available Extensions Section (From External Repos)
+                if !viewModel.availableManifests.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Available (\(viewModel.availableManifests.count))")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.textSecondary)
+                            .padding(.horizontal, 4)
+                        
+                        VStack(spacing: 0) {
+                            ForEach(Array(viewModel.availableManifests.prefix(40).enumerated()), id: \.element.id) { index, manifest in
+                                availableExtensionRow(manifest: manifest)
+                                if index < min(40, viewModel.availableManifests.count) - 1 {
+                                    Divider().background(Color.white.opacity(0.06))
+                                        .padding(.leading, 56)
+                                }
+                            }
+                        }
+                        .background(Color.surfacePrimary)
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+                        )
+                    }
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 4)
             .padding(.bottom, 80)
         }
+        .refreshable {
+            await viewModel.refreshSourcesFromRepos(force: true)
+        }
     }
     
-    private func pendingExtensionRow(source: any MangaSource) -> some View {
+    private func pendingExtensionRow(manifest: SourceManifest) -> some View {
         HStack(spacing: 12) {
-            AsyncMangaImage(url: source.manifest.iconURL, contentMode: .fit, cornerRadius: 8)
+            AsyncMangaImage(url: manifest.iconURL, contentMode: .fit, cornerRadius: 8)
                 .frame(width: 40, height: 40)
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(source.manifest.name)
+                Text(manifest.name)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.textPrimary)
-                Text("\(source.manifest.lang.uppercased()) • v\(source.manifest.version)")
+                Text("\(manifest.lang.uppercased()) • v\(manifest.version)")
                     .font(.system(size: 11))
                     .foregroundColor(.textSecondary)
             }
             
             Spacer()
             
-            if updatingExtensionIDs.contains(source.manifest.id) {
+            if updatingExtensionIDs.contains(manifest.id) {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
                     .scaleEffect(0.8)
             } else {
                 Button {
-                    updatingExtensionIDs.insert(source.manifest.id)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        updatingExtensionIDs.remove(source.manifest.id)
-                        appState.pendingExtensionUpdatesCount = max(0, appState.pendingExtensionUpdatesCount - 1)
+                    updatingExtensionIDs.insert(manifest.id)
+                    viewModel.updateSource(manifest)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        updatingExtensionIDs.remove(manifest.id)
                     }
                 } label: {
                     Text("Update")
@@ -386,6 +424,7 @@ public struct BrowseView: View {
                         .background(Color.mangaAccent)
                         .clipShape(Capsule())
                 }
+                .buttonStyle(.borderless)
             }
         }
         .padding(.horizontal, 12)
@@ -409,7 +448,7 @@ public struct BrowseView: View {
             Spacer()
             
             NavigationLink(destination: SourceDetailView(source: source)) {
-                Text("Settings")
+                Text("Browse")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.textPrimary)
                     .padding(.horizontal, 10)
@@ -417,6 +456,40 @@ public struct BrowseView: View {
                     .background(Color.white.opacity(0.08))
                     .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+    
+    private func availableExtensionRow(manifest: SourceManifest) -> some View {
+        HStack(spacing: 12) {
+            AsyncMangaImage(url: manifest.iconURL, contentMode: .fit, cornerRadius: 8)
+                .frame(width: 40, height: 40)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(manifest.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+                Text("\(manifest.lang.uppercased()) • v\(manifest.version)")
+                    .font(.system(size: 11))
+                    .foregroundColor(.textSecondary)
+            }
+            
+            Spacer()
+            
+            Button {
+                viewModel.installSource(manifest)
+            } label: {
+                Text("+ Install")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.mangaAccentInk)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color.mangaAccent)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -434,22 +507,25 @@ public struct BrowseView: View {
                 
                 VStack(spacing: 0) {
                     ForEach(viewModel.sources, id: \.manifest.id) { src in
-                        HStack(spacing: 12) {
-                            AsyncMangaImage(url: src.manifest.iconURL, contentMode: .fit, cornerRadius: 8)
-                                .frame(width: 36, height: 36)
-                            
-                            Text(src.manifest.name)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.textPrimary)
-                            
-                            Spacer()
-                            
-                            Image(systemName: "arrow.right.circle")
-                                .foregroundColor(.mangaAccent)
-                                .font(.system(size: 16))
+                        NavigationLink(destination: SourceDetailView(source: src)) {
+                            HStack(spacing: 12) {
+                                AsyncMangaImage(url: src.manifest.iconURL, contentMode: .fit, cornerRadius: 8)
+                                    .frame(width: 36, height: 36)
+                                
+                                Text(src.manifest.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.textPrimary)
+                                
+                                Spacer()
+                                
+                                Image(systemName: "arrow.right.circle")
+                                    .foregroundColor(.mangaAccent)
+                                    .font(.system(size: 16))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                        .buttonStyle(.plain)
                     }
                 }
                 .background(Color.surfacePrimary)
@@ -525,7 +601,7 @@ public struct RepositoryManagementSheet: View {
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(.textPrimary)
                         
-                        Text("Enter an extension index URL (Tachiyomi/Keiyoushi, Aidoku, or JSON feed).")
+                        Text("Enter an extension index JSON, repository URL, or MangaDex endpoint.")
                             .font(.system(size: 12))
                             .foregroundColor(.textSecondary)
                         
@@ -575,20 +651,6 @@ public struct RepositoryManagementSheet: View {
                             .foregroundColor(.textSecondary)
                         
                         presetCard(
-                            name: "Keiyoushi Tachiyomi Extensions",
-                            url: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
-                            desc: "Largest community repository with 1,000+ sources",
-                            chips: ["Keiyoushi", "Discord", "Tachiyomi"]
-                        )
-                        
-                        presetCard(
-                            name: "Aidoku Community Sources",
-                            url: "https://aidoku-community.github.io/sources/index.min.json",
-                            desc: "Fast, sandboxed community sources with icons",
-                            chips: ["Aidoku", "Multi", "Fast"]
-                        )
-                        
-                        presetCard(
                             name: "Official MangaDex Mirror",
                             url: "https://api.mangadex.org",
                             desc: "Official MangaDex REST API v5 endpoint",
@@ -601,6 +663,58 @@ public struct RepositoryManagementSheet: View {
                             desc: "Curated manhwa & webtoons (Asura, Aqua, Armageddon)",
                             chips: ["Community", "Curated"]
                         )
+                        
+                        presetCard(
+                            name: "Aidoku Community Sources",
+                            url: "https://aidoku-community.github.io/sources/index.min.json",
+                            desc: "Fast, sandboxed community sources with icons",
+                            chips: ["Aidoku", "Multi", "Fast"]
+                        )
+                        
+                        presetCard(
+                            name: "Keiyoushi Tachiyomi Extensions",
+                            url: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+                            desc: "Largest community repository with 1,000+ sources",
+                            chips: ["Keiyoushi", "Discord", "Tachiyomi"]
+                        )
+                    }
+                    
+                    // Installed Repositories List
+                    if !viewModel.repositories.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Installed Repositories (\(viewModel.repositories.count))")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.textSecondary)
+                            
+                            VStack(spacing: 0) {
+                                ForEach(viewModel.repositories) { repo in
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(repo.name)
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundColor(.textPrimary)
+                                            Text(repo.url)
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.textSecondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer()
+                                        Text("\(repo.sourceCount) src")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundColor(.textTertiary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.white.opacity(0.06))
+                                            .clipShape(Capsule())
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                }
+                            }
+                            .background(Color.surfacePrimary)
+                            .cornerRadius(10)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+                        }
                     }
                 }
                 .padding(16)
@@ -678,12 +792,13 @@ public struct RepositoryManagementSheet: View {
         guard !target.isEmpty else { return }
         
         isLoading = true
-        statusMessage = "Connecting..."
+        statusMessage = "Connecting to repository..."
         isSuccess = false
         
         Task {
             do {
                 let count = try await viewModel.addRepository(url: target)
+                await viewModel.refreshSourcesFromRepos(force: true)
                 self.isLoading = false
                 self.isSuccess = true
                 self.statusMessage = "Successfully added \(count) source(s)!"
