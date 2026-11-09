@@ -68,60 +68,68 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p screenshots
-          DEVICE_NAME="iPhone 16"
-          if ! xcrun simctl list devices available | grep -q "$DEVICE_NAME"; then
-            DEVICE_NAME=$(xcrun simctl list devices available | grep -E "iPhone (15|14|13|SE)" | head -n 1 | sed -E 's/^[[:space:]]*([^(]+)[[:space:]]*\(.*/\1/' | xargs)
+          echo "Finding available simulator..."
+          DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 16" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
+          if [ -z "$DEVICE_ID" ]; then
+            DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 15" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
           fi
-          DEVICE_ID=$(xcrun simctl list devices available | grep "$DEVICE_NAME" | head -n 1 | grep -o -E "[0-9A-F-]{36}")
-          echo "Booting virtual device: $DEVICE_NAME ($DEVICE_ID)"
-          xcrun simctl boot "$DEVICE_ID" || true
-          xcrun simctl bootstatus "$DEVICE_ID" -b || true
+          if [ -z "$DEVICE_ID" ]; then
+            DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
+          fi
+          echo "Using Simulator ID: $DEVICE_ID"
 
-          SIM_APP=$(find build_sim -name "MangaReader.app" -type d | head -n 1)
-          if [ -n "$SIM_APP" ]; then
-            echo "Installing $SIM_APP to virtual simulator..."
-            xcrun simctl install "$DEVICE_ID" "$SIM_APP"
+          if [ -n "$DEVICE_ID" ]; then
+            xcrun simctl boot "$DEVICE_ID" || true
+            xcrun simctl bootstatus "$DEVICE_ID" -b || true
 
-            echo "Capturing 01_Virtual_Library_Tab..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=library || true
-            sleep 4
-            xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Tab.png
-            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+            SIM_APP=$(find build_sim -name "MangaReader.app" -type d | head -n 1)
+            if [ -n "$SIM_APP" ]; then
+              echo "Installing $SIM_APP to virtual simulator..."
+              xcrun simctl install "$DEVICE_ID" "$SIM_APP"
 
-            echo "Capturing 02_Virtual_Browse_Tab..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=browse || true
-            sleep 4
-            xcrun simctl io "$DEVICE_ID" screenshot screenshots/02_Virtual_Browse_Tab.png
-            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+              echo "Capturing 01_Virtual_Library_Tab..."
+              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab library || true
+              sleep 5
+              xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Tab.png
+              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
 
-            echo "Capturing 03_Virtual_Updates_Tab..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=updates || true
-            sleep 3
-            xcrun simctl io "$DEVICE_ID" screenshot screenshots/03_Virtual_Updates_Tab.png
-            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+              echo "Capturing 02_Virtual_Browse_Tab..."
+              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab browse || true
+              sleep 4
+              xcrun simctl io "$DEVICE_ID" screenshot screenshots/02_Virtual_Browse_Tab.png
+              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
 
-            echo "Capturing 04_Virtual_History_Tab..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=history || true
-            sleep 3
-            xcrun simctl io "$DEVICE_ID" screenshot screenshots/04_Virtual_History_Tab.png
-            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+              echo "Capturing 03_Virtual_Updates_Tab..."
+              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab updates || true
+              sleep 3
+              xcrun simctl io "$DEVICE_ID" screenshot screenshots/03_Virtual_Updates_Tab.png
+              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
 
-            echo "Capturing 05_Virtual_More_Tab..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.app --tab=more || true
-            sleep 3
-            xcrun simctl io "$DEVICE_ID" screenshot screenshots/05_Virtual_More_Tab.png
-            xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+              echo "Capturing 04_Virtual_History_Tab..."
+              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab history || true
+              sleep 3
+              xcrun simctl io "$DEVICE_ID" screenshot screenshots/04_Virtual_History_Tab.png
+              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+
+              echo "Capturing 05_Virtual_More_Tab..."
+              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab more || true
+              sleep 3
+              xcrun simctl io "$DEVICE_ID" screenshot screenshots/05_Virtual_More_Tab.png
+              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
+            fi
           fi
 
       # 3. Virtual Unit & Logic Integration Tests
       - name: Run Virtual Unit & Logic Tests
         continue-on-error: true
         run: |
-          DEVICE_NAME="iPhone 16"
-          if ! xcrun simctl list devices available | grep -q "$DEVICE_NAME"; then
-            DEVICE_NAME=$(xcrun simctl list devices available | grep -E "iPhone (15|14|13|SE)" | head -n 1 | sed -E 's/^[[:space:]]*([^(]+)[[:space:]]*\(.*/\1/' | xargs)
+          DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 16" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
+          if [ -z "$DEVICE_ID" ]; then
+            DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 15" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
           fi
-          DEVICE_ID=$(xcrun simctl list devices available | grep "$DEVICE_NAME" | head -n 1 | grep -o -E "[0-9A-F-]{36}")
+          if [ -z "$DEVICE_ID" ]; then
+            DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
+          fi
           
           xcodebuild test \
                      -project MangaReader.xcodeproj \

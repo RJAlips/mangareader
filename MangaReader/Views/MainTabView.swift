@@ -51,6 +51,13 @@ public enum AppTab: Int, CaseIterable, Identifiable {
 public struct MainTabView: View {
     @ObservedObject private var appState = AppState.shared
     @State private var selectedTab: AppTab = {
+        if let idx = ProcessInfo.processInfo.arguments.firstIndex(of: "-tab"),
+           idx + 1 < ProcessInfo.processInfo.arguments.count {
+            let tabName = ProcessInfo.processInfo.arguments[idx + 1]
+            if let tab = AppTab.from(string: tabName) {
+                return tab
+            }
+        }
         if let tabArg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--tab=") }) {
             let tabName = String(tabArg.dropFirst(6))
             if let tab = AppTab.from(string: tabName) {
