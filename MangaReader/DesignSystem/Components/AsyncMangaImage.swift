@@ -140,10 +140,18 @@ public struct AsyncMangaImage: View {
             self.loadedImage = image
             self.isLoading = false
         } catch {
-            // Fallback: if .512.jpg failed, try .256.jpg or original
-            if url.absoluteString.hasSuffix(".512.jpg") {
-                let base = String(url.absoluteString.dropLast(8))
-                let candidateURLs = ["\(base).256.jpg", base].compactMap { URL(string: $0) }
+            // Fallback: if .256.jpg or .512.jpg failed, try alternate thumbnail sizes or raw original cover
+            let urlString = url.absoluteString
+            if urlString.contains(".256.jpg") || urlString.contains(".512.jpg") {
+                let rawBase = urlString
+                    .replacingOccurrences(of: ".256.jpg", with: "")
+                    .replacingOccurrences(of: ".512.jpg", with: "")
+                let candidateURLs = [
+                    URL(string: "\(rawBase).256.jpg"),
+                    URL(string: rawBase),
+                    URL(string: "\(rawBase).512.jpg")
+                ].compactMap { $0 }.filter { $0 != url }
+                
                 for fallbackURL in candidateURLs {
                     if let data = try? await NetworkClient.shared.fetchDataWithCDNHeaders(from: fallbackURL, headers: customHeaders),
                        let image = UIImage(data: data) {

@@ -94,6 +94,18 @@ public final class ImageCacheManager: @unchecked Sendable {
         await diskCache.remove(for: url.absoluteString)
     }
     
+    public func fetchImage(for url: URL, refererOverride: String? = nil, customHeaders: [String: String]? = nil) async throws -> UIImage {
+        if let cached = await image(for: url) {
+            return cached
+        }
+        let data = try await NetworkClient.shared.fetchDataWithCDNHeaders(from: url, headers: customHeaders, refererOverride: refererOverride)
+        guard let img = UIImage(data: data) else {
+            throw NetworkError.noData
+        }
+        await insert(img, for: url, data: data)
+        return img
+    }
+    
     public func clearAll() async {
         memoryCache.removeAllObjects()
         await diskCache.clearAll()

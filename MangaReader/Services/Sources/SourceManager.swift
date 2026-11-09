@@ -755,7 +755,7 @@ public final class SourceManager: ObservableObject {
     }
 }
 
-// MARK: - Community Web Source (HTML Parsing with MangaDex Fallback)
+// MARK: - Community Web Source (3-Tier Resilient Architecture: HTML Scraper -> WP REST API -> MangaDex Catalog)
 
 public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     public let manifest: SourceManifest
@@ -767,6 +767,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     
     private let client = NetworkClient.shared
     private let mangadex = MangaDexSource()
+    private let requestTimeout: TimeInterval = 10.0
     
     public init(
         manifest: SourceManifest,
@@ -784,15 +785,29 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         self.chaptersURL = chaptersURL
     }
     
+    // MARK: - Popular Titles (3-Tier Pipeline)
     public func fetchPopular(page: Int) async throws -> [MangaItem] {
-        if let targetURL = popularURL ?? URL(string: "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=views")?.absoluteString,
-           let url = URL(string: targetURL) {
+        // Tier 1: HTML Scrape with timeout
+        let candidateURLs = [
+            popularURL,
+            "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=views",
+            "\(baseURLString)/manga/?order=popular",
+            "\(baseURLString)/manga/"
+        ].compactMap { $0 }.compactMap { URL(string: $0) }
+        
+        for url in candidateURLs {
             if let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
                 return scraped
             }
         }
         
-        let fallback = try await mangadex.fetchPopular(page: page)
+        // Tier 2: WordPress REST API fallback (/wp-json/wp/v2/manga or /wp-json/wp/v2/posts)
+        if let wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "views") ?? (await fetchWordPressTitles(subpath: "posts", orderby: "date")), !wpItems.isEmpty {
+            return wpItems
+        }
+        
+        // Tier 3: MangaDex Catalog fallback
+        let fallback = (try? await mangadex.fetchPopular(page: page)) ?? []
         return fallback.map { item in
             var mapped = item
             mapped.sourceID = self.manifest.id
@@ -800,15 +815,29 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
     }
     
+    // MARK: - Latest Titles (3-Tier Pipeline)
     public func fetchLatest(page: Int) async throws -> [MangaItem] {
-        if let targetURL = latestURL ?? URL(string: "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=latest")?.absoluteString,
-           let url = URL(string: targetURL) {
+        // Tier 1: HTML Scrape with timeout
+        let candidateURLs = [
+            latestURL,
+            "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=latest",
+            "\(baseURLString)/manga/?order=update",
+            "\(baseURLString)/latest/"
+        ].compactMap { $0 }.compactMap { URL(string: $0) }
+        
+        for url in candidateURLs {
             if let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
                 return scraped
             }
         }
         
-        let fallback = try await mangadex.fetchLatest(page: page)
+        // Tier 2: WordPress REST API fallback
+        if let wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "date") ?? (await fetchWordPressTitles(subpath: "posts", orderby: "date")), !wpItems.isEmpty {
+            return wpItems
+        }
+        
+        // Tier 3: MangaDex Catalog fallback
+        let fallback = (try? await mangadex.fetchLatest(page: page)) ?? []
         return fallback.map { item in
             var mapped = item
             mapped.sourceID = self.manifest.id
@@ -816,15 +845,35 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
     }
     
+    // MARK: - Search (3-Tier Pipeline)
     public func search(query: String, page: Int) async throws -> [MangaItem] {
-        if let ep = searchURL {
-            let replaced = ep.replacingOccurrences(of: "{query}", with: query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)
-            if let url = URL(string: replaced), let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
+        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanQuery.isEmpty else {
+            return try await fetchPopular(page: page)
+        }
+        
+        let encoded = cleanQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanQuery
+        
+        // Tier 1: HTML Search
+        let candidateSearchURLs = [
+            searchURL?.replacingOccurrences(of: "{query}", with: encoded),
+            "\(baseURLString)/?s=\(encoded)&post_type=wp-manga",
+            "\(baseURLString)/?s=\(encoded)"
+        ].compactMap { $0 }.compactMap { URL(string: $0) }
+        
+        for url in candidateSearchURLs {
+            if let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
                 return scraped
             }
         }
         
-        let fallback = try await mangadex.search(query: query, page: page)
+        // Tier 2: WordPress REST API search
+        if let wpResults = await fetchWordPressTitles(subpath: "manga", searchQuery: encoded) ?? (await fetchWordPressTitles(subpath: "posts", searchQuery: encoded)), !wpResults.isEmpty {
+            return wpResults
+        }
+        
+        // Tier 3: MangaDex Catalog search
+        let fallback = (try? await mangadex.search(query: cleanQuery, page: page)) ?? []
         return fallback.map { item in
             var mapped = item
             mapped.sourceID = self.manifest.id
@@ -832,6 +881,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
     }
     
+    // MARK: - Manga Detail
     public func fetchMangaDetail(urlOrSlug: String) async throws -> MangaItem {
         if !urlOrSlug.contains("/") && urlOrSlug.count >= 32 {
             let item = try await mangadex.fetchMangaDetail(urlOrSlug: urlOrSlug)
@@ -841,17 +891,24 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         if let url = URL(string: urlOrSlug.hasPrefix("http") ? urlOrSlug : "\(baseURLString)/\(urlOrSlug)") {
-            if let html = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString),
-               let htmlString = String(data: html, encoding: .utf8) {
-                let title = extractRegex(pattern: #"<h1[^>]*>([^<]+)</h1>"#, in: htmlString) ?? url.lastPathComponent.capitalized
-                let desc = extractRegex(pattern: #"<div class="[^"]*(?:summary__content|description-summary)[^"]*">([\s\S]*?)</div>"#, in: htmlString)
-                let cover = extractRegex(pattern: #"<div class="[^"]*(?:summary_image|thumb)[^"]*">[\s\S]*?<img[^>]+(?:src|data-src)="([^"]+)"#, in: htmlString)
-                let coverURL = URLResolver.resolve(cover, relativeTo: URL(string: baseURLString))
+            if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
+               let html = String(data: htmlData, encoding: .utf8) {
+                let title = extractRegex(pattern: #"<h1[^>]*>([^<]+)</h1>"#, in: html) ?? url.lastPathComponent.capitalized
+                let desc = extractRegex(pattern: #"<div class="[^"]*(?:summary__content|description-summary|entry-content)[^"]*">([\s\S]*?)</div>"#, in: html)
+                
+                // Extract cover using priority attributes
+                var coverURL: URL? = nil
+                if let imgTag = extractRegex(pattern: #"<div class="[^"]*(?:summary_image|thumb|thumb-manga)[^"]*">([\s\S]*?)</div>"#, in: html) {
+                    coverURL = Self.extractImageURL(from: imgTag, relativeTo: URL(string: baseURLString))
+                }
+                if coverURL == nil {
+                    coverURL = Self.extractImageURL(from: html, relativeTo: URL(string: baseURLString))
+                }
                 
                 return MangaItem(
                     sourceID: manifest.id,
                     urlOrSlug: urlOrSlug,
-                    title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                    title: Self.unescapeHTML(title),
                     author: "Community",
                     description: desc?.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression),
                     coverURL: coverURL,
@@ -861,53 +918,43 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
         }
         
-        let fallback = try await mangadex.fetchPopular(page: 1)
-        if let match = fallback.first {
+        let searchResults = try? await mangadex.search(query: urlOrSlug, page: 1)
+        if let match = searchResults?.first {
             var mapped = match
             mapped.sourceID = self.manifest.id
             return mapped
         }
+        
         throw NetworkError.badServerResponse(statusCode: 404)
     }
     
+    // MARK: - Chapters
     public func fetchChapters(for urlOrSlug: String) async throws -> [ChapterItem] {
         if !urlOrSlug.contains("/") && urlOrSlug.count >= 32 {
             return try await mangadex.fetchChapters(for: urlOrSlug)
         }
         
         if let url = URL(string: urlOrSlug.hasPrefix("http") ? urlOrSlug : "\(baseURLString)/\(urlOrSlug)") {
-            if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString),
+            if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
                let html = String(data: htmlData, encoding: .utf8) {
-                let chapterPattern = #"<a[^>]+href="([^"]+)"[^>]*>[\s\S]*?(?:Chapter|Ch\.)\s*([\d\.]+)"#
-                if let regex = try? NSRegularExpression(pattern: chapterPattern, options: .caseInsensitive) {
-                    let nsString = html as NSString
-                    let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
-                    var chapters: [ChapterItem] = []
-                    for match in matches {
-                        let link = nsString.substring(with: match.range(at: 1))
-                        let numStr = nsString.substring(with: match.range(at: 2))
-                        let num = Double(numStr) ?? 1.0
-                        chapters.append(ChapterItem(
-                            id: UUID(),
-                            mangaID: UUID(),
-                            sourceChapterID: link,
-                            chapterNumber: num,
-                            title: "Chapter \(numStr)",
-                            scanlator: manifest.name,
-                            pageCount: 0,
-                            pageURLs: []
-                        ))
+                var chapters = parseChaptersFromHTML(html)
+                
+                // If 0 chapters and post ID is present, try WP AJAX manga_get_chapters
+                if chapters.isEmpty, let postID = extractRegex(pattern: #"(?:manga_id|data-id|post_id)\s*=\s*['"]?(\d+)"#, in: html) {
+                    if let ajaxChapters = await fetchChaptersFromWPAJAX(mangaID: postID) {
+                        chapters = ajaxChapters
                     }
-                    if !chapters.isEmpty {
-                        return chapters
-                    }
+                }
+                
+                if !chapters.isEmpty {
+                    return chapters
                 }
             }
         }
         
         let searchResults = try? await mangadex.search(query: urlOrSlug, page: 1)
         if let bestMatch = searchResults?.first {
-            return try await mangadex.fetchChapters(for: bestMatch.urlOrSlug)
+            return (try? await mangadex.fetchChapters(for: bestMatch.urlOrSlug)) ?? []
         }
         
         return [
@@ -924,6 +971,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         ]
     }
     
+    // MARK: - Page URLs
     public func fetchPageURLs(for chapterSourceID: String) async throws -> [URL] {
         var cleanId = chapterSourceID.trimmingCharacters(in: .whitespacesAndNewlines)
         if let last = cleanId.components(separatedBy: "_").last, !last.isEmpty, last.count >= 32 {
@@ -932,19 +980,32 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         if let url = URL(string: chapterSourceID.hasPrefix("http") ? chapterSourceID : "\(baseURLString)/\(chapterSourceID)") {
-            if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString),
+            if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
                let html = String(data: htmlData, encoding: .utf8) {
-                let imgPattern = #"<img[^>]+(?:src|data-src|data-lazy-src)="([^"]+)"[^>]*class="[^"]*(?:wp-manga-chapter-img|page-image)[^"]*""#
-                if let regex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
-                    let nsString = html as NSString
-                    let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
-                    let urls: [URL] = matches.compactMap { m in
-                        let urlStr = nsString.substring(with: m.range(at: 1))
-                        return URLResolver.resolve(urlStr, relativeTo: URL(string: baseURLString))
+                let base = URL(string: baseURLString)
+                
+                // Match all <img> tags in HTML
+                let imgRegexPattern = #"<img[^>]+>"#
+                guard let regex = try? NSRegularExpression(pattern: imgRegexPattern, options: .caseInsensitive) else { return [] }
+                let ns = html as NSString
+                let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+                
+                var pageURLs: [URL] = []
+                for m in matches {
+                    let tag = ns.substring(with: m.range)
+                    let lower = tag.lowercased()
+                    if lower.contains("avatar") || lower.contains("logo") || lower.contains("banner") || lower.contains("favicon") {
+                        continue
                     }
-                    if !urls.isEmpty {
-                        return urls
+                    if let extracted = Self.extractImageURL(from: tag, relativeTo: base) {
+                        if !pageURLs.contains(extracted) {
+                            pageURLs.append(extracted)
+                        }
                     }
+                }
+                
+                if !pageURLs.isEmpty {
+                    return pageURLs
                 }
             }
         }
@@ -955,37 +1016,101 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     public func checkHealth() async -> Bool {
         guard let url = URL(string: baseURLString) else { return false }
         do {
-            _ = try await client.fetchDataWithCDNHeaders(from: url)
+            _ = try await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: 5)
             return true
         } catch {
             return true
         }
     }
     
+    // MARK: - Scraper Helpers & Image Attribute Priority
+    
+    public static func extractImageURL(from tag: String, relativeTo baseURL: URL?) -> URL? {
+        // Priority order as required:
+        // 1. data-src
+        // 2. data-lazy-src
+        // 3. data-cfsrc
+        // 4. data-original (and data-manga-src)
+        // 5. srcset / data-srcset (first URL before space/comma)
+        // 6. src (only if not starting with data:image)
+        
+        let singleAttrs = ["data-src", "data-lazy-src", "data-cfsrc", "data-original", "data-manga-src"]
+        for attr in singleAttrs {
+            let pattern = "\(attr)\\s*=\\s*[\"']([^\"']+)[\"']"
+            if let raw = extractRegexFirst(pattern: pattern, in: tag) {
+                if let sanitized = sanitizeImageURL(raw, baseURL: baseURL) {
+                    return sanitized
+                }
+            }
+        }
+        
+        let setAttrs = ["data-srcset", "srcset"]
+        for attr in setAttrs {
+            let pattern = "\(attr)\\s*=\\s*[\"']([^\"']+)[\"']"
+            if let raw = extractRegexFirst(pattern: pattern, in: tag) {
+                let firstCand = raw.components(separatedBy: ",").first?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .components(separatedBy: .whitespaces).first
+                if let cand = firstCand, let sanitized = sanitizeImageURL(cand, baseURL: baseURL) {
+                    return sanitized
+                }
+            }
+        }
+        
+        let srcPattern = "src\\s*=\\s*[\"']([^\"']+)[\"']"
+        if let raw = extractRegexFirst(pattern: srcPattern, in: tag) {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.lowercased().hasPrefix("data:image") {
+                return sanitizeImageURL(trimmed, baseURL: baseURL)
+            }
+        }
+        
+        return nil
+    }
+    
+    private static func sanitizeImageURL(_ raw: String, baseURL: URL?) -> URL? {
+        var str = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !str.isEmpty else { return nil }
+        
+        str = str.replacingOccurrences(of: "\\/", with: "/")
+        
+        if str.hasPrefix("//") {
+            let scheme = baseURL?.scheme ?? "https"
+            str = "\(scheme):\(str)"
+        }
+        
+        if let direct = URL(string: str), direct.scheme != nil, direct.host != nil {
+            return direct
+        }
+        
+        return URLResolver.resolve(str, relativeTo: baseURL)
+    }
+    
     private func scrapeTitles(from url: URL) async throws -> [MangaItem] {
-        let data = try await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString)
+        let data = try await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout)
         guard let html = String(data: data, encoding: .utf8) else { return [] }
         
         var results: [MangaItem] = []
         let base = URL(string: baseURLString)
         
-        let pattern = #"<a[^>]+href="([^"]+)"[^>]*>[\s\S]*?<img[^>]+(?:src|data-src|data-lazy-src)="([^"]+)"[^>]*>[\s\S]*?<(?:h3|h4|h5|div|span)[^>]+class="[^"]*(?:title|post-title|tt)[^"]*"[^>]*>([^<]+)<"#
+        // Multi-card regex pattern covering Madara, WP-Manga, and custom webtoon themes
+        let cardPattern = #"<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?<img[^>]+>[\s\S]*?<(?:h1|h2|h3|h4|h5|div|span|p)[^>]+class="[^"]*(?:title|post-title|tt|entry-title)[^"]*"[^>]*>([^<]+)<[\s\S]*?)</a>"#
         
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+        if let regex = try? NSRegularExpression(pattern: cardPattern, options: .caseInsensitive) {
             let ns = html as NSString
             let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
-            for m in matches.prefix(30) {
+            for m in matches.prefix(35) {
                 let link = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                let coverStr = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = ns.substring(with: m.range(at: 2))
                 let title = ns.substring(with: m.range(at: 3)).trimmingCharacters(in: .whitespacesAndNewlines)
                 
-                let coverURL = URLResolver.resolve(coverStr, relativeTo: base)
+                let coverURL = Self.extractImageURL(from: body, relativeTo: base)
                 let slug = link.trimmingCharacters(in: CharacterSet(charactersIn: "/")).components(separatedBy: "/").last ?? link
                 
                 results.append(MangaItem(
                     sourceID: manifest.id,
                     urlOrSlug: slug,
-                    title: title,
+                    title: Self.unescapeHTML(title),
                     coverURL: coverURL,
                     genres: ["Manhwa", "Manga"],
                     status: .ongoing
@@ -996,11 +1121,165 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         return results
     }
     
+    // MARK: - WordPress REST API (Tier 2 Fallback)
+    
+    private func fetchWordPressTitles(subpath: String, orderby: String? = nil, searchQuery: String? = nil) async -> [MangaItem]? {
+        var queryItems = ["_embed=1", "per_page=20"]
+        if let order = orderby {
+            queryItems.append("orderby=\(order)")
+        }
+        if let s = searchQuery {
+            queryItems.append("search=\(s)")
+        }
+        let queryString = queryItems.joined(separator: "&")
+        guard let url = URL(string: "\(baseURLString)/wp-json/wp/v2/\(subpath)?\(queryString)") else {
+            return nil
+        }
+        
+        guard let data = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: 5.0),
+              let posts = try? JSONDecoder().decode([WPPostDTO].self, from: data),
+              !posts.isEmpty else {
+            return nil
+        }
+        
+        return posts.compactMap { post in
+            let rawTitle = post.title?.rendered ?? "Untitled"
+            let title = Self.unescapeHTML(rawTitle)
+            let slug = post.slug ?? post.link ?? UUID().uuidString
+            let coverStr = post.embedded?.featuredMedia?.first?.sourceUrl
+            let coverURL = Self.sanitizeImageURL(coverStr ?? "", baseURL: URL(string: baseURLString))
+            
+            return MangaItem(
+                sourceID: manifest.id,
+                urlOrSlug: slug,
+                title: title,
+                coverURL: coverURL,
+                genres: ["Manhwa", "Manga"],
+                status: .ongoing
+            )
+        }
+    }
+    
+    private func fetchChaptersFromWPAJAX(mangaID: String) async -> [ChapterItem]? {
+        guard let url = URL(string: "\(baseURLString)/wp-admin/admin-ajax.php") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+        request.setValue(baseURLString, forHTTPHeaderField: "Referer")
+        request.httpBody = "action=manga_get_chapters&manga=\(mangaID)".data(using: .utf8)
+        request.timeoutInterval = 6.0
+        
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let html = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        
+        let chapters = parseChaptersFromHTML(html)
+        return chapters.isEmpty ? nil : chapters
+    }
+    
+    private func parseChaptersFromHTML(_ html: String) -> [ChapterItem] {
+        let chapterPattern = #"<a[^>]+href="([^"]+)"[^>]*>[\s\S]*?(?:Chapter|Ch\.)\s*([\d\.]+)"#
+        guard let regex = try? NSRegularExpression(pattern: chapterPattern, options: .caseInsensitive) else { return [] }
+        let nsString = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
+        
+        var chapters: [ChapterItem] = []
+        var seenLinks = Set<String>()
+        
+        for match in matches {
+            let link = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !seenLinks.contains(link) else { continue }
+            seenLinks.insert(link)
+            
+            let numStr = nsString.substring(with: match.range(at: 2))
+            let num = Double(numStr) ?? 1.0
+            chapters.append(ChapterItem(
+                id: UUID(),
+                mangaID: UUID(),
+                sourceChapterID: link,
+                chapterNumber: num,
+                title: "Chapter \(numStr)",
+                scanlator: manifest.name,
+                pageCount: 0,
+                pageURLs: []
+            ))
+        }
+        
+        return chapters.sorted { $0.chapterNumber > $1.chapterNumber }
+    }
+    
+    private static func unescapeHTML(_ string: String) -> String {
+        var result = string
+        let entities: [String: String] = [
+            "&amp;": "&",
+            "&#038;": "&",
+            "&quot;": "\"",
+            "&apos;": "'",
+            "&#8217;": "'",
+            "&#8216;": "'",
+            "&#8220;": "\"",
+            "&#8221;": "\"",
+            "&#8211;": "-",
+            "&#8212;": "—",
+            "&lt;": "<",
+            "&gt;": ">",
+            "&nbsp;": " "
+        ]
+        for (entity, char) in entities {
+            result = result.replacingOccurrences(of: entity, with: char)
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     private func extractRegex(pattern: String, in text: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
         let ns = text as NSString
         guard let first = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
         return ns.substring(with: first.range(at: 1))
+    }
+    
+    private static func extractRegexFirst(pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+        let ns = text as NSString
+        guard let first = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return ns.substring(with: first.range(at: 1))
+    }
+}
+
+// MARK: - WordPress REST API DTOs for Community Source Tier 2 Fallback
+
+private struct WPPostDTO: Decodable {
+    let id: Int?
+    let slug: String?
+    let link: String?
+    let title: WPTitleDTO?
+    let embedded: WPEmbeddedDTO?
+    
+    enum CodingKeys: String, CodingKey {
+        case id, slug, link, title
+        case embedded = "_embedded"
+    }
+}
+
+private struct WPTitleDTO: Decodable {
+    let rendered: String?
+}
+
+private struct WPEmbeddedDTO: Decodable {
+    let featuredMedia: [WPFeaturedMediaDTO]?
+    
+    enum CodingKeys: String, CodingKey {
+        case featuredMedia = "wp:featuredmedia"
+    }
+}
+
+private struct WPFeaturedMediaDTO: Decodable {
+    let sourceUrl: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case sourceUrl = "source_url"
     }
 }
 

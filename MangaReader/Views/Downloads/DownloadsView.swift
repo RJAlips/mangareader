@@ -10,9 +10,8 @@ import SwiftUI
 public struct DownloadsView: View {
     @StateObject private var viewModel = DownloadsViewModel()
     @ObservedObject private var appState = AppState.shared
+    @ObservedObject private var downloadManager = DownloadManager.shared
     @State private var showInfoBanner: Bool = true
-    @State private var concurrentDownloads: Int = 2
-    @State private var isPaused: Bool = false
     
     public init() {}
     
@@ -138,11 +137,11 @@ public struct DownloadsView: View {
         HStack(spacing: 10) {
             // Resume / Pause Pill
             Button {
-                isPaused.toggle()
+                downloadManager.togglePauseAll()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                    Text(isPaused ? "Resume" : "Pause")
+                    Image(systemName: downloadManager.isPaused ? "play.fill" : "pause.fill")
+                    Text(downloadManager.isPaused ? "Resume" : "Pause")
                 }
                 .font(.system(size: 13, weight: .bold))
                 .foregroundColor(.mangaAccentInk)
@@ -153,15 +152,12 @@ public struct DownloadsView: View {
             }
             
             // Concurrency Pill
-            Menu {
-                Button("1 Concurrent Download") { concurrentDownloads = 1 }
-                Button("2 Concurrent Downloads") { concurrentDownloads = 2 }
-                Button("3 Concurrent Downloads") { concurrentDownloads = 3 }
-                Button("5 Concurrent Downloads") { concurrentDownloads = 5 }
+            Button {
+                downloadManager.cycleConcurrency()
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "bolt.fill")
-                    Text("Concurrent: \(concurrentDownloads)")
+                    Text("⚡ Concurrent: \(downloadManager.maxConcurrentDownloads)")
                 }
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.textPrimary)

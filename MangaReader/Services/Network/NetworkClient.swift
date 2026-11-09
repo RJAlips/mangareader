@@ -14,6 +14,7 @@ public enum NetworkError: LocalizedError {
     case rateLimited
     case noData
     case unauthorized
+    case unknown(message: String)
     
     public var errorDescription: String? {
         switch self {
@@ -23,6 +24,7 @@ public enum NetworkError: LocalizedError {
         case .rateLimited: return "Rate limited by source provider. Please wait a moment."
         case .noData: return "No data received from server."
         case .unauthorized: return "Authentication required. Please check your credentials."
+        case .unknown(let msg): return msg
         }
     }
 }
@@ -125,8 +127,11 @@ public actor NetworkClient {
         }
     }
     
-    public func fetchData(from url: URL, headers: [String: String]? = nil) async throws -> Data {
+    public func fetchData(from url: URL, headers: [String: String]? = nil, timeoutInterval: TimeInterval? = nil) async throws -> Data {
         var request = URLRequest(url: url)
+        if let timeout = timeoutInterval {
+            request.timeoutInterval = timeout
+        }
         headers?.forEach { request.setValue($1, forHTTPHeaderField: $0) }
 
         let (data, response) = try await session.data(for: request)
@@ -137,7 +142,7 @@ public actor NetworkClient {
     }
 
     /// Fetches raw image data, automatically deriving a browser-like `User-Agent`
-    /// and a `Referer` (matching the image's own host) unless the caller supplies
+    /// and a `Referer` (matching the image's own host or mangadex.org) unless the caller supplies
     /// explicit overrides.
     ///
     /// Many manga CDNs (MangaDex@Home, custom repository image hosts) reject
@@ -147,7 +152,8 @@ public actor NetworkClient {
     public func fetchDataWithCDNHeaders(
         from url: URL,
         headers: [String: String]? = nil,
-        refererOverride: String? = nil
+        refererOverride: String? = nil,
+        timeoutInterval: TimeInterval? = nil
     ) async throws -> Data {
         var requestHeaders = headers ?? [:]
 
@@ -157,21 +163,27 @@ public actor NetworkClient {
             if host.contains("mangadex.org") {
                 requestHeaders["User-Agent"] = "MangaReader/1.0.0 (iOS; Apple; CFNetwork)"
             } else {
-                requestHeaders["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+                requestHeaders["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
             }
         }
 
-        // Referer — default to the image's own origin so CDNs that check Referer
-        // (e.g. uploads.mangadex.org, custom repo hosts) see a same-origin referrer.
-        if requestHeaders["Referer"] == nil, let host = url.host, !host.isEmpty {
-            requestHeaders["Referer"] = refererOverride ?? "https://\(host)/"
+        // Referer — MangaDex uploads require https://mangadex.org/, other CDNs use origin or caller override
+        if requestHeaders["Referer"] == nil {
+            let host = url.host?.lowercased() ?? ""
+            if host.contains("mangadex.org") {
+                requestHeaders["Referer"] = "https://mangadex.org/"
+            } else if let scheme = url.scheme, let rawHost = url.host, !rawHost.isEmpty {
+                requestHeaders["Referer"] = refererOverride ?? "\(scheme)://\(rawHost)/"
+            } else if let override = refererOverride {
+                requestHeaders["Referer"] = override
+            }
         }
 
-        // Accept — ensure binary image types are accepted.
+        // Accept — ensure modern formats (AVIF, WebP) and all image types are accepted
         if requestHeaders["Accept"] == nil {
-            requestHeaders["Accept"] = "image/webp,image/png,image/jpeg,image/*,*/*;q=0.8"
+            requestHeaders["Accept"] = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
         }
 
-        return try await fetchData(from: url, headers: requestHeaders)
+        return try await fetchData(from: url, headers: requestHeaders, timeoutInterval: timeoutInterval)
     }
 }

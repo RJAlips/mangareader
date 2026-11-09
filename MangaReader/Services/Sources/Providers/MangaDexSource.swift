@@ -189,7 +189,8 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
         
         var coverURL: URL? = nil
         if let coverFile = coverFile {
-            coverURL = URL(string: "https://uploads.mangadex.org/covers/\(entry.id)/\(coverFile).512.jpg")
+            // Standardize on 256px cover thumbnails for fast loading & CDN throttle resistance
+            coverURL = URL(string: "https://uploads.mangadex.org/covers/\(entry.id)/\(coverFile).256.jpg")
         }
         
         let tags = entry.attributes.tags.compactMap { $0.attributes.name["en"] }

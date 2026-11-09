@@ -14,6 +14,7 @@ public struct SourceDetailView: View {
     @State private var selectedTab: Int = 0 // 0 = Popular, 1 = Latest
     @State private var isLoading: Bool = false
     @State private var currentPage: Int = 1
+    @State private var currentFetchTask: Task<Void, Never>? = nil
     
     private let columns = [
         GridItem(.adaptive(minimum: 105, maximum: 140), spacing: Theme.Spacing.md, alignment: .top)
@@ -24,6 +25,16 @@ public struct SourceDetailView: View {
             return URL(string: community.baseURLString)
         }
         return URL(string: "https://api.mangadex.org")
+    }
+    
+    private var sourceWebURL: URL? {
+        if let community = source as? CommunityWebSource, let url = URL(string: community.baseURLString) {
+            return url
+        }
+        if !source.manifest.baseURL.isEmpty, let url = URL(string: source.manifest.baseURL) {
+            return url
+        }
+        return URL(string: "https://mangadex.org")
     }
     
     public init(source: any MangaSource) {
@@ -37,7 +48,7 @@ public struct SourceDetailView: View {
                 .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.top, Theme.Spacing.sm)
                 .onSubmit {
-                    Task { await performSearch() }
+                    performSearch()
                 }
             
             // Tab Picker
@@ -50,9 +61,7 @@ public struct SourceDetailView: View {
             .padding(.vertical, Theme.Spacing.sm)
             .onChange(of: selectedTab) {
                 currentPage = 1
-                Task {
-                    await loadData()
-                }
+                loadData()
             }
             
             // Content
@@ -69,31 +78,57 @@ public struct SourceDetailView: View {
                 Spacer()
             } else if !isLoading && items.isEmpty {
                 Spacer()
-                VStack(spacing: 14) {
+                VStack(spacing: 16) {
                     Image(systemName: "books.vertical")
                         .font(.system(size: 44))
                         .foregroundColor(.textTertiary)
-                    Text("No Titles Available")
-                        .font(.sectionTitle)
-                        .foregroundColor(.textPrimary)
-                    Text("Check your connection or try another source.")
-                        .font(.captionMedium)
-                        .foregroundColor(.textSecondary)
-                    Button {
-                        Task { await loadData() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Retry")
+                    
+                    VStack(spacing: 4) {
+                        Text("No Titles Available")
+                            .font(.sectionTitle)
+                            .foregroundColor(.textPrimary)
+                        Text("Check your connection or open in browser.")
+                            .font(.captionMedium)
+                            .foregroundColor(.textSecondary)
+                    }
+                    
+                    HStack(spacing: 12) {
+                        Button {
+                            loadData()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Retry")
+                            }
+                            .font(.bodyMedium)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Color.mangaAccent)
+                            .cornerRadius(Theme.CornerRadius.small)
                         }
-                        .font(.bodyMedium)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.mangaAccent)
-                        .cornerRadius(Theme.CornerRadius.small)
+                        
+                        if let webURL = sourceWebURL {
+                            Link(destination: webURL) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "safari")
+                                    Text("Open in Web Browser")
+                                }
+                                .font(.bodyMedium)
+                                .foregroundColor(.textPrimary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 9)
+                                .background(Color.surfaceSecondary)
+                                .cornerRadius(Theme.CornerRadius.small)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Theme.CornerRadius.small)
+                                        .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                                )
+                            }
+                        }
                     }
                 }
+                .padding(.horizontal, 24)
                 Spacer()
             } else {
                 ScrollView {
@@ -116,44 +151,71 @@ public struct SourceDetailView: View {
         .background(Color.appBackground.ignoresSafeArea())
         .navigationTitle(source.manifest.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let webURL = sourceWebURL {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Link(destination: webURL) {
+                        Image(systemName: "safari")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.mangaAccent)
+                    }
+                }
+            }
+        }
         .task {
             if items.isEmpty {
-                await loadData()
+                loadData()
+            }
+        }
+        .onDisappear {
+            currentFetchTask?.cancel()
+        }
+    }
+    
+    @MainActor
+    private func loadData() {
+        currentFetchTask?.cancel()
+        currentFetchTask = Task { @MainActor in
+            isLoading = true
+            defer { isLoading = false }
+            
+            do {
+                let result: [MangaItem]
+                if selectedTab == 0 {
+                    result = try await source.fetchPopular(page: currentPage)
+                } else {
+                    result = try await source.fetchLatest(page: currentPage)
+                }
+                if !Task.isCancelled {
+                    self.items = result
+                }
+            } catch {
+                // Keep existing items if reload fails
             }
         }
     }
     
     @MainActor
-    private func loadData() async {
-        isLoading = true
-        do {
-            let result: [MangaItem]
-            if selectedTab == 0 {
-                result = try await source.fetchPopular(page: currentPage)
-            } else {
-                result = try await source.fetchLatest(page: currentPage)
-            }
-            self.items = result
-        } catch {
-            // Keep existing items if reload fails
-        }
-        self.isLoading = false
-    }
-    
-    @MainActor
-    private func performSearch() async {
+    private func performSearch() {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            await loadData()
+            loadData()
             return
         }
-        isLoading = true
-        do {
-            let results = try await source.search(query: trimmed, page: 1)
-            self.items = results
-        } catch {
-            // Error handling
+        
+        currentFetchTask?.cancel()
+        currentFetchTask = Task { @MainActor in
+            isLoading = true
+            defer { isLoading = false }
+            
+            do {
+                let results = try await source.search(query: trimmed, page: 1)
+                if !Task.isCancelled {
+                    self.items = results
+                }
+            } catch {
+                // Keep existing or empty
+            }
         }
-        self.isLoading = false
     }
 }
