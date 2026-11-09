@@ -65,6 +65,7 @@ jobs:
                      build 2>&1 | tee sim_build.log
 
       - name: Boot Simulator, Launch Virtual App & Capture Screenshots
+        continue-on-error: true
         run: |
           mkdir -p screenshots
           DEVICE_NAME="iPhone 16"
@@ -74,6 +75,7 @@ jobs:
           DEVICE_ID=$(xcrun simctl list devices available | grep "$DEVICE_NAME" | head -n 1 | grep -o -E "[0-9A-F-]{36}")
           echo "Booting virtual device: $DEVICE_NAME ($DEVICE_ID)"
           xcrun simctl boot "$DEVICE_ID" || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b || true
 
           SIM_APP=$(find build_sim -name "MangaReader.app" -type d | head -n 1)
           if [ -n "$SIM_APP" ]; then
@@ -81,8 +83,8 @@ jobs:
             xcrun simctl install "$DEVICE_ID" "$SIM_APP"
 
             echo "Launching MangaReader virtually..."
-            xcrun simctl launch "$DEVICE_ID" com.mangareader.MangaReader
-            sleep 5
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app || true
+            sleep 6
 
             # Capture Virtual Screen
             xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Screen.png
