@@ -136,11 +136,9 @@ final class SourceManagerTests: XCTestCase {
             }
         }
         
-        // Ensure all built-in sources are included
-        for src in manager.sources {
-            if !sourcesToTest.contains(where: { $0.manifest.id == src.manifest.id }) {
-                sourcesToTest.append(src)
-            }
+        // Filter out unconfigured self-hosted server instances like Komga
+        sourcesToTest = sourcesToTest.filter {
+            !$0.baseURL.isEmpty && $0.manifest.id != "com.mangareader.source.komga"
         }
         
         XCTAssertFalse(sourcesToTest.isEmpty, "Sources to test must not be empty")

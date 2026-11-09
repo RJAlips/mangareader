@@ -13,6 +13,7 @@ public final class DemoMangaSource: MangaSource, @unchecked Sendable {
         name: "MangaReader Curated",
         version: "1.2.0",
         lang: "EN",
+        baseURL: "https://demo.mangareader.app",
         iconURL: URL(string: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=100&q=80"),
         isEnabled: true,
         isNsfw: false,

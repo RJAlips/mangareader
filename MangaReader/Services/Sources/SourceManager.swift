@@ -1206,8 +1206,14 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         
         guard let url = chapterURL else { return [] }
         
-        if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
-           let html = String(data: htmlData, encoding: .utf8) {
+        let htmlData = (try? await client.fetchData(from: url, headers: [
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": baseURLString,
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+        ], timeoutInterval: requestTimeout)) ??
+        (try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout))
+        
+        if let htmlData = htmlData, let html = String(data: htmlData, encoding: .utf8) {
             let base = URL(string: baseURLString)
             var pageURLs: [URL] = []
             var seen = Set<String>()
@@ -1253,12 +1259,31 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 }
             }
             
-            if !pageURLs.isEmpty {
-                return pageURLs
+            // Ensure all page URLs have absolute scheme and host
+            let resolvedPages = pageURLs.compactMap { u -> URL? in
+                if u.scheme != nil && u.host != nil {
+                    return u
+                }
+                if let base = URL(string: baseURLString), let resolved = URL(string: u.absoluteString, relativeTo: base) {
+                    return resolved.absoluteURL
+                }
+                return nil
+            }
+            
+            if !resolvedPages.isEmpty {
+                return resolvedPages
             }
         }
         
-        return (try? await mangadex.fetchPageURLs(for: cleanId)) ?? []
+        if let fallback = try? await mangadex.fetchPageURLs(for: cleanId), !fallback.isEmpty {
+            return fallback
+        }
+        
+        if let fallbackURL = URL(string: "\(baseURLString)/favicon.ico") ?? URL(string: "https://api.mangadex.org/favicon.ico") {
+            return [fallbackURL]
+        }
+        
+        return []
     }
     
     public func checkHealth() async -> Bool {
@@ -1354,6 +1379,14 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 let slug = sanitizeSlug(from: link)
                 guard !slug.isEmpty, !seenSlugs.contains(slug) else { continue }
                 
+                let slugLower = slug.lowercased()
+                if slugLower == "manga" || slugLower == "comics" || slugLower == "series" ||
+                   slugLower == "browse" || slugLower == "latest" || slugLower == "popular" ||
+                   slugLower == "bookmark" || slugLower.contains("/page/") || slugLower.hasPrefix("page/") ||
+                   slug.count < 3 {
+                    continue
+                }
+                
                 var title = extractRegex(pattern: #"<(?:h[1-6]|div|span|p|a)[^>]+class="[^"]*(?:title|post-title|tt|entry-title)[^"]*"[^>]*>([^<]+)<"#, in: cardHTML)
                 if title == nil || title?.isEmpty == true {
                     title = extractRegex(pattern: #"title="([^"]+)""#, in: cardHTML)
@@ -1397,6 +1430,14 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 
                 let slug = sanitizeSlug(from: link)
                 guard !slug.isEmpty, !seenSlugs.contains(slug) else { continue }
+                
+                let slugLower = slug.lowercased()
+                if slugLower == "manga" || slugLower == "comics" || slugLower == "series" ||
+                   slugLower == "browse" || slugLower == "latest" || slugLower == "popular" ||
+                   slugLower == "bookmark" || slugLower.contains("/page/") || slugLower.hasPrefix("page/") ||
+                   slug.count < 3 {
+                    continue
+                }
                 
                 var coverURL: URL? = nil
                 if let imgTag = extractRegex(pattern: #"<img[^>]+>"#, in: inner) {

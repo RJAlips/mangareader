@@ -13,6 +13,7 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
         name: "MangaDex (Official API)",
         version: "5.1.0",
         lang: "Multi (EN Default)",
+        baseURL: "https://api.mangadex.org",
         iconURL: URL(string: "https://mangadex.org/favicon.ico"),
         isEnabled: true,
         isNsfw: false,
