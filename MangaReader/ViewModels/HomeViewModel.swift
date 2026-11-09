@@ -329,7 +329,7 @@ public final class HomeViewModel: ObservableObject {
         if let ch = db.chaptersList.first(where: { $0.id == entry.chapterID }), ch.isDownloaded {
             return true
         }
-        return DownloadManager.shared.tasks.contains(where: { $0.chapterID == entry.chapterID && $0.status == .completed })
+        return DownloadManager.shared.tasks.contains(where: { $0.chapter.id == entry.chapterID && $0.status == .completed })
     }
     
     public static func formatChapterNum(_ num: Double) -> String {
