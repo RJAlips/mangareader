@@ -68,7 +68,6 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p screenshots
-          echo "Finding available simulator..."
           DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 16" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
           if [ -z "$DEVICE_ID" ]; then
             DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 15" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
@@ -76,47 +75,21 @@ jobs:
           if [ -z "$DEVICE_ID" ]; then
             DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
           fi
-          echo "Using Simulator ID: $DEVICE_ID"
+          echo "Booting Simulator: $DEVICE_ID"
+          xcrun simctl boot "$DEVICE_ID" || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b || true
 
-          if [ -n "$DEVICE_ID" ]; then
-            xcrun simctl boot "$DEVICE_ID" || true
-            xcrun simctl bootstatus "$DEVICE_ID" -b || true
+          SIM_APP=$(find build_sim -name "MangaReader.app" -type d | head -n 1)
+          if [ -n "$SIM_APP" ]; then
+            echo "Installing $SIM_APP to virtual simulator..."
+            xcrun simctl install "$DEVICE_ID" "$SIM_APP"
 
-            SIM_APP=$(find build_sim -name "MangaReader.app" -type d | head -n 1)
-            if [ -n "$SIM_APP" ]; then
-              echo "Installing $SIM_APP to virtual simulator..."
-              xcrun simctl install "$DEVICE_ID" "$SIM_APP"
+            echo "Launching MangaReader virtually..."
+            xcrun simctl launch "$DEVICE_ID" com.mangareader.app || true
+            sleep 8
 
-              echo "Capturing 01_Virtual_Library_Tab..."
-              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab library || true
-              sleep 5
-              xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Tab.png
-              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
-
-              echo "Capturing 02_Virtual_Browse_Tab..."
-              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab browse || true
-              sleep 4
-              xcrun simctl io "$DEVICE_ID" screenshot screenshots/02_Virtual_Browse_Tab.png
-              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
-
-              echo "Capturing 03_Virtual_Updates_Tab..."
-              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab updates || true
-              sleep 3
-              xcrun simctl io "$DEVICE_ID" screenshot screenshots/03_Virtual_Updates_Tab.png
-              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
-
-              echo "Capturing 04_Virtual_History_Tab..."
-              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab history || true
-              sleep 3
-              xcrun simctl io "$DEVICE_ID" screenshot screenshots/04_Virtual_History_Tab.png
-              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
-
-              echo "Capturing 05_Virtual_More_Tab..."
-              xcrun simctl launch "$DEVICE_ID" com.mangareader.app -tab more || true
-              sleep 3
-              xcrun simctl io "$DEVICE_ID" screenshot screenshots/05_Virtual_More_Tab.png
-              xcrun simctl terminate "$DEVICE_ID" com.mangareader.app || true
-            fi
+            xcrun simctl io "$DEVICE_ID" screenshot screenshots/01_Virtual_Library_Screen.png
+            echo "Screenshot captured: screenshots/01_Virtual_Library_Screen.png"
           fi
 
       # 3. Virtual Unit & Logic Integration Tests
