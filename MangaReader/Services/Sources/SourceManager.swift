@@ -1206,12 +1206,15 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         
         guard let url = chapterURL else { return [] }
         
-        let htmlData = (try? await client.fetchData(from: url, headers: [
+        var htmlData = try? await client.fetchData(from: url, headers: [
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": baseURLString,
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
-        ], timeoutInterval: requestTimeout)) ??
-        (try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout))
+        ], timeoutInterval: requestTimeout)
+        
+        if htmlData == nil {
+            htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout)
+        }
         
         if let htmlData = htmlData, let html = String(data: htmlData, encoding: .utf8) {
             let base = URL(string: baseURLString)
