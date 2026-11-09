@@ -802,7 +802,11 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // Tier 2: WordPress REST API fallback (/wp-json/wp/v2/manga or /wp-json/wp/v2/posts)
-        if let wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "views") ?? (await fetchWordPressTitles(subpath: "posts", orderby: "date")), !wpItems.isEmpty {
+        var wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "views")
+        if wpItems == nil || wpItems?.isEmpty == true {
+            wpItems = await fetchWordPressTitles(subpath: "posts", orderby: "date")
+        }
+        if let wpItems = wpItems, !wpItems.isEmpty {
             return wpItems
         }
         
@@ -832,7 +836,11 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // Tier 2: WordPress REST API fallback
-        if let wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "date") ?? (await fetchWordPressTitles(subpath: "posts", orderby: "date")), !wpItems.isEmpty {
+        var wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "date")
+        if wpItems == nil || wpItems?.isEmpty == true {
+            wpItems = await fetchWordPressTitles(subpath: "posts", orderby: "date")
+        }
+        if let wpItems = wpItems, !wpItems.isEmpty {
             return wpItems
         }
         
@@ -868,7 +876,11 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // Tier 2: WordPress REST API search
-        if let wpResults = await fetchWordPressTitles(subpath: "manga", searchQuery: encoded) ?? (await fetchWordPressTitles(subpath: "posts", searchQuery: encoded)), !wpResults.isEmpty {
+        var wpResults = await fetchWordPressTitles(subpath: "manga", searchQuery: encoded)
+        if wpResults == nil || wpResults?.isEmpty == true {
+            wpResults = await fetchWordPressTitles(subpath: "posts", searchQuery: encoded)
+        }
+        if let wpResults = wpResults, !wpResults.isEmpty {
             return wpResults
         }
         

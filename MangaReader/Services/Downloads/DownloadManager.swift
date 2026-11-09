@@ -654,8 +654,8 @@ public final class DownloadManager: ObservableObject {
                             sourceChapterID: chapterIdStr,
                             chapterNumber: dbChapter?.chapterNumber ?? 1.0,
                             title: dbChapter?.title ?? "Chapter \(chapterIdStr)",
-                            isDownloaded: true,
                             pageCount: imageFiles.count,
+                            isDownloaded: true,
                             localDirectoryPath: "Downloads/\(mangaIdStr)/\(chapterIdStr)/"
                         )
                         

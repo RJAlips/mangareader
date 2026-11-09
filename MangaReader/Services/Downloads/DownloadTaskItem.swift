@@ -88,7 +88,7 @@ public struct DownloadTaskItem: Identifiable, Codable, Equatable, Hashable {
     public var author: String? { manga.author }
     public var sourceId: String { manga.sourceID }
     public var chapterId: UUID { chapter.id }
-    public var chapterTitle: String { chapter.title }
+    public var chapterTitle: String { chapter.title ?? "Chapter \(chapter.chapterNumber)" }
     public var chapterNumber: Double { chapter.chapterNumber }
     
     public init(
