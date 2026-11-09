@@ -346,8 +346,11 @@ public final class ReaderViewModel: ObservableObject {
     
     private func prefetchUpcomingPages() {
         guard settings.preloadPagesAhead > 0 else { return }
-        let nextRange = (currentPageIndex + 1)...min(currentPageIndex + settings.preloadPagesAhead, max(0, pages.count - 1))
-        guard nextRange.lowerBound <= nextRange.upperBound else { return }
+        guard !pages.isEmpty else { return }
+        let start = currentPageIndex + 1
+        let end = min(currentPageIndex + settings.preloadPagesAhead, pages.count - 1)
+        guard start <= end else { return }
+        let nextRange = start...end
         
         Task {
             for idx in nextRange {
