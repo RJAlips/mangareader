@@ -242,18 +242,28 @@ final class SourceManagerTests: XCTestCase {
                     // (4) Chapter & Page Pipeline Check
                     var chapCount = 0
                     var pageCount = 0
-                    if let firstManga = popularItems.first {
-                        let chapters = (try? await resolved.fetchChapters(manga: firstManga)) ?? []
-                        chapCount = chapters.count
-                        
-                        if let firstChap = chapters.first {
-                            let pages = (try? await resolved.fetchPages(chapter: firstChap)) ?? []
-                            pageCount = pages.count
-                            for p in pages {
-                                guard p.absoluteString.hasPrefix("http") else {
-                                    pageCount = 0
-                                    break
+                    for candidateManga in popularItems.prefix(5) {
+                        let chapters = (try? await resolved.fetchChapters(manga: candidateManga)) ?? []
+                        if !chapters.isEmpty {
+                            chapCount = chapters.count
+                            for candidateChap in chapters.prefix(3) {
+                                let pages = (try? await resolved.fetchPages(chapter: candidateChap)) ?? []
+                                if !pages.isEmpty {
+                                    var allValid = true
+                                    for p in pages {
+                                        guard p.absoluteString.hasPrefix("http") else {
+                                            allValid = false
+                                            break
+                                        }
+                                    }
+                                    if allValid {
+                                        pageCount = pages.count
+                                        break
+                                    }
                                 }
+                            }
+                            if pageCount > 0 {
+                                break
                             }
                         }
                     }

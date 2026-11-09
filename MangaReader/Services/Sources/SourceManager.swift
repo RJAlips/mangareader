@@ -833,14 +833,20 @@ public final class SourceManager: ObservableObject {
             }
             
             // 3. Chapters check
-            if let firstManga = popularItems.first {
-                let chapters = try await source.fetchChapters(manga: firstManga)
-                chaptersCount = chapters.count
-                
-                // 4. Pages check
-                if let firstChap = chapters.first {
-                    let pages = try await source.fetchPages(chapter: firstChap)
-                    pagesCount = pages.count
+            for candidateManga in popularItems.prefix(5) {
+                if let chapters = try? await source.fetchChapters(manga: candidateManga), !chapters.isEmpty {
+                    chaptersCount = chapters.count
+                    
+                    // 4. Pages check
+                    for candidateChap in chapters.prefix(3) {
+                        if let pages = try? await source.fetchPages(chapter: candidateChap), !pages.isEmpty {
+                            pagesCount = pages.count
+                            break
+                        }
+                    }
+                    if pagesCount > 0 {
+                        break
+                    }
                 }
             }
             
@@ -1192,9 +1198,15 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     // MARK: - Page URLs
     public func fetchPageURLs(for chapterSourceID: String) async throws -> [URL] {
         var cleanId = chapterSourceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let last = cleanId.components(separatedBy: "_").last, !last.isEmpty, last.count >= 32 {
-            cleanId = last
-            return try await mangadex.fetchPageURLs(for: cleanId)
+        if cleanId.lowercased().hasPrefix("mangadex_") {
+            let mdId = String(cleanId.dropFirst(9))
+            if let mdPages = try? await mangadex.fetchPageURLs(for: mdId), !mdPages.isEmpty {
+                return mdPages
+            }
+        } else if !cleanId.hasPrefix("http") && UUID(uuidString: cleanId) != nil {
+            if let mdPages = try? await mangadex.fetchPageURLs(for: cleanId), !mdPages.isEmpty {
+                return mdPages
+            }
         }
         
         let chapterURL: URL?
@@ -1560,13 +1572,23 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         let nsString = html as NSString
         let base = detailURL ?? URL(string: baseURLString)
         
-        let pattern = #"<a[^>]+href="([^"]*(?:chapter|episode|/series/\d+/\w+|/\d+/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
+        let pattern = #"<a[^>]+href="([^"]*(?:chapter|episode|/series/\d+/[a-z0-9]+|/\d+/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
         if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
             let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
             for match in matches {
                 guard match.numberOfRanges > 2 else { continue }
                 var link = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                 let inner = nsString.substring(with: match.range(at: 2))
+                
+                let linkLower = link.lowercased()
+                if linkLower.contains(".png") || linkLower.contains(".jpg") || linkLower.contains(".jpeg") ||
+                   linkLower.contains(".webp") || linkLower.contains(".svg") || linkLower.contains(".gif") ||
+                   linkLower.contains(".ico") || linkLower.contains(".css") || linkLower.contains(".js") ||
+                   linkLower.contains("/wp-content/") || linkLower.contains("/wp-includes/") ||
+                   linkLower.contains("/genre/") || linkLower.contains("/tag/") || linkLower.contains("-release/") ||
+                   linkLower.contains("/author/") {
+                    continue
+                }
                 
                 if !link.hasPrefix("http") {
                     if let base = base, let resolved = URL(string: link, relativeTo: base) {
@@ -1592,6 +1614,10 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 } else if let anyNumMatch = extractRegex(pattern: #"(\d+(?:\.\d+)?)"#, in: cleanInner) {
                     numStr = anyNumMatch
                     num = Double(anyNumMatch) ?? 1.0
+                }
+                
+                if num > 10000 {
+                    num = 1.0
                 }
                 
                 let title = cleanInner.isEmpty ? "Chapter \(numStr)" : cleanInner

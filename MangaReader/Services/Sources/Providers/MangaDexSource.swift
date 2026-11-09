@@ -116,6 +116,34 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
             }
         }
         
+        // Fallback: If English chapters are external or empty, fetch any language with hosted pages
+        if allChapters.isEmpty {
+            let fallbackEndpoint = "\(baseURL)/manga/\(urlOrSlug)/feed?order[chapter]=desc&limit=\(limit)&offset=0&includeEmptyPages=0&includeFuturePublishAt=0&includeExternalUrl=0"
+            if let fallbackURL = URL(string: fallbackEndpoint),
+               let response = try? await client.fetchJSON(MangaDexChapterFeedResponse.self, from: fallbackURL, headers: customUserAgent) {
+                let fallbackBatch: [ChapterItem] = response.data.compactMap { ch in
+                    if let pages = ch.attributes.pages, pages == 0 { return nil }
+                    if let ext = ch.attributes.externalUrl, !ext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return nil
+                    }
+                    let chNum = ch.attributes.chapter.flatMap { Double($0) } ?? 0.0
+                    return ChapterItem(
+                        id: UUID(),
+                        mangaID: UUID(),
+                        sourceChapterID: ch.id,
+                        chapterNumber: chNum,
+                        volumeNumber: ch.attributes.volume.flatMap { Double($0) },
+                        title: ch.attributes.title,
+                        scanlator: "MangaDex",
+                        releaseDate: nil,
+                        pageCount: ch.attributes.pages ?? 0,
+                        pageURLs: []
+                    )
+                }
+                allChapters.append(contentsOf: fallbackBatch)
+            }
+        }
+        
         return allChapters
     }
     
