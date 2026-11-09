@@ -31,8 +31,20 @@ extension MangaSource {
         return try await fetchPopular(page: page)
     }
     
+    public func fetchLatestManga(page: Int = 1) async throws -> [MangaItem] {
+        return try await fetchLatest(page: page)
+    }
+    
+    public func searchManga(query: String, page: Int = 1) async throws -> [MangaItem] {
+        return try await search(query: query, page: page)
+    }
+    
     public func fetchChapters(mangaId: UUID) async throws -> [ChapterItem] {
         return try await fetchChapters(for: mangaId.uuidString)
+    }
+    
+    public func fetchChapters(mangaId: String) async throws -> [ChapterItem] {
+        return try await fetchChapters(for: mangaId)
     }
     
     public func fetchChapters(manga: MangaItem) async throws -> [ChapterItem] {

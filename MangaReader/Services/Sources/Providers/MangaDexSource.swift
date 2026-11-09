@@ -29,8 +29,9 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
     public init() {}
     
     public func fetchPopular(page: Int) async throws -> [MangaItem] {
-        let offset = max(0, (page - 1) * 20)
-        let endpoint = "\(baseURL)/manga?limit=20&offset=\(offset)&includes[]=cover_art&includes[]=author&order[followedCount]=desc&contentRating[]=safe&contentRating[]=suggestive"
+        let limit = 40
+        let offset = max(0, (page - 1) * limit)
+        let endpoint = "\(baseURL)/manga?limit=\(limit)&offset=\(offset)&includes[]=cover_art&includes[]=author&order[followedCount]=desc&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica"
         guard let url = URL(string: endpoint) else { throw NetworkError.invalidURL }
         
         let response = try await client.fetchJSON(MangaDexResponse.self, from: url, headers: customUserAgent)
@@ -38,8 +39,9 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
     }
     
     public func fetchLatest(page: Int) async throws -> [MangaItem] {
-        let offset = max(0, (page - 1) * 20)
-        let endpoint = "\(baseURL)/manga?limit=20&offset=\(offset)&includes[]=cover_art&includes[]=author&order[latestUploadedChapter]=desc&contentRating[]=safe&contentRating[]=suggestive"
+        let limit = 40
+        let offset = max(0, (page - 1) * limit)
+        let endpoint = "\(baseURL)/manga?limit=\(limit)&offset=\(offset)&includes[]=cover_art&includes[]=author&order[latestUploadedChapter]=desc&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica"
         guard let url = URL(string: endpoint) else { throw NetworkError.invalidURL }
         
         let response = try await client.fetchJSON(MangaDexResponse.self, from: url, headers: customUserAgent)
@@ -50,9 +52,50 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
         guard let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return []
         }
-        let offset = max(0, (page - 1) * 20)
-        let endpoint = "\(baseURL)/manga?title=\(encodedQuery)&limit=20&offset=\(offset)&includes[]=cover_art&includes[]=author&contentRating[]=safe&contentRating[]=suggestive"
+        let limit = 40
+        let offset = max(0, (page - 1) * limit)
+        let endpoint = "\(baseURL)/manga?title=\(encodedQuery)&limit=\(limit)&offset=\(offset)&includes[]=cover_art&includes[]=author&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica"
         guard let url = URL(string: endpoint) else { throw NetworkError.invalidURL }
+        
+        let response = try await client.fetchJSON(MangaDexResponse.self, from: url, headers: customUserAgent)
+        return response.data.compactMap { self.parseManga(entry: $0) }
+    }
+    
+    public func fetchCatalog(
+        page: Int,
+        limit: Int = 40,
+        sort: String = "popular",
+        titleQuery: String? = nil,
+        originalLanguages: [String]? = nil
+    ) async throws -> [MangaItem] {
+        let offset = max(0, (page - 1) * limit)
+        var urlComps = URLComponents(string: "\(baseURL)/manga")
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "offset", value: "\(offset)"),
+            URLQueryItem(name: "includes[]", value: "cover_art"),
+            URLQueryItem(name: "includes[]", value: "author"),
+            URLQueryItem(name: "contentRating[]", value: "safe"),
+            URLQueryItem(name: "contentRating[]", value: "suggestive"),
+            URLQueryItem(name: "contentRating[]", value: "erotica")
+        ]
+        
+        if let langs = originalLanguages, !langs.isEmpty {
+            for l in langs {
+                items.append(URLQueryItem(name: "originalLanguage[]", value: l))
+            }
+        }
+        
+        if let query = titleQuery, !query.isEmpty {
+            items.append(URLQueryItem(name: "title", value: query))
+        } else if sort == "latest" {
+            items.append(URLQueryItem(name: "order[latestUploadedChapter]", value: "desc"))
+        } else {
+            items.append(URLQueryItem(name: "order[followedCount]", value: "desc"))
+        }
+        
+        urlComps?.queryItems = items
+        guard let url = urlComps?.url else { throw NetworkError.invalidURL }
         
         let response = try await client.fetchJSON(MangaDexResponse.self, from: url, headers: customUserAgent)
         return response.data.compactMap { self.parseManga(entry: $0) }
@@ -72,15 +115,21 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
     public func fetchChapters(for urlOrSlug: String) async throws -> [ChapterItem] {
         var allChapters: [ChapterItem] = []
         var offset = 0
-        let limit = 100
+        let limit = 500
+        var totalCount: Int? = nil
         var hasMore = true
         
-        // Fetch up to 500 chapters across pages to support long series like The Ghostly Doctor
-        while hasMore && offset < 500 {
+        // Fetch paginated chapters across all pages up to total or 10,000 chapters
+        while hasMore && offset < (totalCount ?? 10000) && offset < 10000 {
             let endpoint = "\(baseURL)/manga/\(urlOrSlug)/feed?translatedLanguage[]=en&order[chapter]=desc&limit=\(limit)&offset=\(offset)&includeEmptyPages=0&includeFuturePublishAt=0&includeExternalUrl=0"
             guard let url = URL(string: endpoint) else { break }
             
-            let response = try await client.fetchJSON(MangaDexChapterFeedResponse.self, from: url, headers: customUserAgent)
+            guard let response = try? await client.fetchJSON(MangaDexChapterFeedResponse.self, from: url, headers: customUserAgent) else {
+                break
+            }
+            if let t = response.total {
+                totalCount = t
+            }
             if response.data.isEmpty {
                 break
             }
@@ -109,7 +158,7 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
             
             allChapters.append(contentsOf: batch)
             
-            if response.data.count < limit {
+            if response.data.count < limit || (totalCount != nil && (offset + limit) >= totalCount!) {
                 hasMore = false
             } else {
                 offset += limit
@@ -118,9 +167,23 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
         
         // Fallback: If English chapters are external or empty, fetch any language with hosted pages
         if allChapters.isEmpty {
-            let fallbackEndpoint = "\(baseURL)/manga/\(urlOrSlug)/feed?order[chapter]=desc&limit=\(limit)&offset=0&includeEmptyPages=0&includeFuturePublishAt=0&includeExternalUrl=0"
-            if let fallbackURL = URL(string: fallbackEndpoint),
-               let response = try? await client.fetchJSON(MangaDexChapterFeedResponse.self, from: fallbackURL, headers: customUserAgent) {
+            var fbOffset = 0
+            var fbHasMore = true
+            var fbTotal: Int? = nil
+            
+            while fbHasMore && fbOffset < (fbTotal ?? 10000) && fbOffset < 10000 {
+                let fallbackEndpoint = "\(baseURL)/manga/\(urlOrSlug)/feed?order[chapter]=desc&limit=\(limit)&offset=\(fbOffset)&includeEmptyPages=0&includeFuturePublishAt=0&includeExternalUrl=0"
+                guard let fallbackURL = URL(string: fallbackEndpoint),
+                      let response = try? await client.fetchJSON(MangaDexChapterFeedResponse.self, from: fallbackURL, headers: customUserAgent) else {
+                    break
+                }
+                if let t = response.total {
+                    fbTotal = t
+                }
+                if response.data.isEmpty {
+                    break
+                }
+                
                 let fallbackBatch: [ChapterItem] = response.data.compactMap { ch in
                     if let pages = ch.attributes.pages, pages == 0 { return nil }
                     if let ext = ch.attributes.externalUrl, !ext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -141,6 +204,12 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
                     )
                 }
                 allChapters.append(contentsOf: fallbackBatch)
+                
+                if response.data.count < limit || (fbTotal != nil && (fbOffset + limit) >= fbTotal!) {
+                    fbHasMore = false
+                } else {
+                    fbOffset += limit
+                }
             }
         }
         
@@ -287,6 +356,9 @@ private struct MangaDexRelationshipAttributes: Decodable {
 
 private struct MangaDexChapterFeedResponse: Decodable {
     let data: [MangaDexChapterEntry]
+    let total: Int?
+    let limit: Int?
+    let offset: Int?
 }
 
 private struct MangaDexChapterEntry: Decodable {

@@ -972,12 +972,36 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     // MARK: - Popular Titles (3-Tier Pipeline)
     public func fetchPopular(page: Int) async throws -> [MangaItem] {
         // Tier 1: HTML Scrape with timeout
-        let candidateURLs = [
-            popularURL,
-            "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=views",
-            "\(baseURLString)/manga/?order=popular",
-            "\(baseURLString)/manga/"
-        ].compactMap { $0 }.compactMap { URL(string: $0) }
+        var candidateURLs: [URL] = []
+        if page == 1 {
+            candidateURLs = [
+                popularURL,
+                "\(baseURLString)/manga/page/1/?m_orderby=views",
+                "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=views",
+                "\(baseURLString)/manga/?order=popular",
+                "\(baseURLString)/manga/"
+            ].compactMap { $0 }.compactMap { URL(string: $0) }
+        } else {
+            var pagedPopular: String? = nil
+            if let pop = popularURL {
+                if pop.contains("{page}") {
+                    pagedPopular = pop.replacingOccurrences(of: "{page}", with: "\(page)")
+                } else if pop.contains("?") {
+                    pagedPopular = "\(pop)&page=\(page)"
+                } else {
+                    let trimmed = pop.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    pagedPopular = "\(trimmed)/page/\(page)/"
+                }
+            }
+            candidateURLs = [
+                pagedPopular,
+                "\(baseURLString)/manga/page/\(page)/?m_orderby=views",
+                "\(baseURLString)/page/\(page)/?s=&post_type=wp-manga&m_orderby=views",
+                "\(baseURLString)/manga/?page=\(page)&order=popular",
+                "\(baseURLString)/manga/page/\(page)/",
+                "\(baseURLString)/manga/?page=\(page)"
+            ].compactMap { $0 }.compactMap { URL(string: $0) }
+        }
         
         for url in candidateURLs {
             if let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
@@ -986,32 +1010,53 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // Tier 2: WordPress REST API fallback (/wp-json/wp/v2/manga or /wp-json/wp/v2/posts)
-        var wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "views")
+        var wpItems = await fetchWordPressTitles(subpath: "manga", page: page, orderby: "views")
         if wpItems == nil || wpItems?.isEmpty == true {
-            wpItems = await fetchWordPressTitles(subpath: "posts", orderby: "date")
+            wpItems = await fetchWordPressTitles(subpath: "posts", page: page, orderby: "date")
         }
         if let wpItems = wpItems, !wpItems.isEmpty {
             return wpItems
         }
         
         // Tier 3: MangaDex Catalog fallback
-        let fallback = (try? await mangadex.fetchPopular(page: page)) ?? []
-        return fallback.map { item in
-            var mapped = item
-            mapped.sourceID = self.manifest.id
-            return mapped
-        }
+        return await fetchTier3CatalogFallback(mode: "popular", page: page)
     }
     
     // MARK: - Latest Titles (3-Tier Pipeline)
     public func fetchLatest(page: Int) async throws -> [MangaItem] {
         // Tier 1: HTML Scrape with timeout
-        let candidateURLs = [
-            latestURL,
-            "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=latest",
-            "\(baseURLString)/manga/?order=update",
-            "\(baseURLString)/latest/"
-        ].compactMap { $0 }.compactMap { URL(string: $0) }
+        var candidateURLs: [URL] = []
+        if page == 1 {
+            candidateURLs = [
+                latestURL,
+                "\(baseURLString)/manga/page/1/?m_orderby=latest",
+                "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=latest",
+                "\(baseURLString)/manga/?order=update",
+                "\(baseURLString)/latest/",
+                "\(baseURLString)/manga/"
+            ].compactMap { $0 }.compactMap { URL(string: $0) }
+        } else {
+            var pagedLatest: String? = nil
+            if let lat = latestURL {
+                if lat.contains("{page}") {
+                    pagedLatest = lat.replacingOccurrences(of: "{page}", with: "\(page)")
+                } else if lat.contains("?") {
+                    pagedLatest = "\(lat)&page=\(page)"
+                } else {
+                    let trimmed = lat.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    pagedLatest = "\(trimmed)/page/\(page)/"
+                }
+            }
+            candidateURLs = [
+                pagedLatest,
+                "\(baseURLString)/manga/page/\(page)/?m_orderby=latest",
+                "\(baseURLString)/page/\(page)/?s=&post_type=wp-manga&m_orderby=latest",
+                "\(baseURLString)/manga/?page=\(page)&order=update",
+                "\(baseURLString)/latest/page/\(page)/",
+                "\(baseURLString)/manga/page/\(page)/",
+                "\(baseURLString)/manga/?page=\(page)"
+            ].compactMap { $0 }.compactMap { URL(string: $0) }
+        }
         
         for url in candidateURLs {
             if let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
@@ -1020,21 +1065,16 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // Tier 2: WordPress REST API fallback
-        var wpItems = await fetchWordPressTitles(subpath: "manga", orderby: "date")
+        var wpItems = await fetchWordPressTitles(subpath: "manga", page: page, orderby: "date")
         if wpItems == nil || wpItems?.isEmpty == true {
-            wpItems = await fetchWordPressTitles(subpath: "posts", orderby: "date")
+            wpItems = await fetchWordPressTitles(subpath: "posts", page: page, orderby: "date")
         }
         if let wpItems = wpItems, !wpItems.isEmpty {
             return wpItems
         }
         
         // Tier 3: MangaDex Catalog fallback
-        let fallback = (try? await mangadex.fetchLatest(page: page)) ?? []
-        return fallback.map { item in
-            var mapped = item
-            mapped.sourceID = self.manifest.id
-            return mapped
-        }
+        return await fetchTier3CatalogFallback(mode: "latest", page: page)
     }
     
     // MARK: - Search (3-Tier Pipeline)
@@ -1047,11 +1087,30 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         let encoded = cleanQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanQuery
         
         // Tier 1: HTML Search
-        let candidateSearchURLs = [
-            searchURL?.replacingOccurrences(of: "{query}", with: encoded),
-            "\(baseURLString)/?s=\(encoded)&post_type=wp-manga",
-            "\(baseURLString)/?s=\(encoded)"
-        ].compactMap { $0 }.compactMap { URL(string: $0) }
+        var candidateSearchURLs: [URL] = []
+        var customSearch = searchURL?.replacingOccurrences(of: "{query}", with: encoded)
+        if let cs = customSearch {
+            if cs.contains("{page}") {
+                customSearch = cs.replacingOccurrences(of: "{page}", with: "\(page)")
+            } else if page > 1 {
+                customSearch = cs.contains("?") ? "\(cs)&page=\(page)" : "\(cs)/page/\(page)/"
+            }
+        }
+        
+        if page == 1 {
+            candidateSearchURLs = [
+                customSearch,
+                "\(baseURLString)/?s=\(encoded)&post_type=wp-manga",
+                "\(baseURLString)/?s=\(encoded)"
+            ].compactMap { $0 }.compactMap { URL(string: $0) }
+        } else {
+            candidateSearchURLs = [
+                customSearch,
+                "\(baseURLString)/page/\(page)/?s=\(encoded)&post_type=wp-manga",
+                "\(baseURLString)/page/\(page)/?s=\(encoded)",
+                "\(baseURLString)/?s=\(encoded)&page=\(page)"
+            ].compactMap { $0 }.compactMap { URL(string: $0) }
+        }
         
         for url in candidateSearchURLs {
             if let scraped = try? await scrapeTitles(from: url), !scraped.isEmpty {
@@ -1060,20 +1119,52 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // Tier 2: WordPress REST API search
-        var wpResults = await fetchWordPressTitles(subpath: "manga", searchQuery: encoded)
+        var wpResults = await fetchWordPressTitles(subpath: "manga", page: page, searchQuery: encoded)
         if wpResults == nil || wpResults?.isEmpty == true {
-            wpResults = await fetchWordPressTitles(subpath: "posts", searchQuery: encoded)
+            wpResults = await fetchWordPressTitles(subpath: "posts", page: page, searchQuery: encoded)
         }
         if let wpResults = wpResults, !wpResults.isEmpty {
             return wpResults
         }
         
         // Tier 3: MangaDex Catalog search
-        let fallback = (try? await mangadex.search(query: cleanQuery, page: page)) ?? []
-        return fallback.map { item in
-            var mapped = item
-            mapped.sourceID = self.manifest.id
-            return mapped
+        return await fetchTier3CatalogFallback(mode: "search", page: page, query: cleanQuery)
+    }
+    
+    private func fetchTier3CatalogFallback(mode: String, page: Int, query: String? = nil) async -> [MangaItem] {
+        let lowerName = manifest.name.lowercased()
+        let lowerId = manifest.id.lowercased()
+        let isManhwa = lowerName.contains("manhwa") || lowerName.contains("asura") || lowerName.contains("flame") || lowerName.contains("reaper") || lowerId.contains("manhwa") || lowerId.contains("asura")
+        let languages = isManhwa ? ["ko", "zh", "en"] : []
+        
+        do {
+            let items: [MangaItem]
+            if let q = query, !q.isEmpty {
+                items = try await mangadex.fetchCatalog(page: page, limit: 40, sort: "relevance", titleQuery: q, originalLanguages: languages)
+            } else if mode == "latest" {
+                items = try await mangadex.fetchCatalog(page: page, limit: 40, sort: "latestUploadedChapter", originalLanguages: languages)
+            } else {
+                items = try await mangadex.fetchCatalog(page: page, limit: 40, sort: "followedCount", originalLanguages: languages)
+            }
+            return items.map { item in
+                var mapped = item
+                mapped.sourceID = self.manifest.id
+                return mapped
+            }
+        } catch {
+            let fallback: [MangaItem]
+            if let q = query, !q.isEmpty {
+                fallback = (try? await mangadex.search(query: q, page: page)) ?? []
+            } else if mode == "latest" {
+                fallback = (try? await mangadex.fetchLatest(page: page)) ?? []
+            } else {
+                fallback = (try? await mangadex.fetchPopular(page: page)) ?? []
+            }
+            return fallback.map { item in
+                var mapped = item
+                mapped.sourceID = self.manifest.id
+                return mapped
+            }
         }
     }
     
@@ -1383,11 +1474,11 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         let base = URL(string: baseURLString)
         let ns = html as NSString
         
-        // Strategy A: Card containers (Astro, Madara, WP-Manga, Flame, etc.)
-        let cardContainerPattern = #"<div[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|manga-item|slider__item|bigor|unit|col-6|col-md-2)[^"]*"[^>]*>[\s\S]*?</div>\s*</div>"#
+        // Strategy A: Card containers (Astro, Madara, WP-Manga, Flame, Asura, etc.)
+        let cardContainerPattern = #"<(?:div|article)[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|unit|col-6|col-md-2|article)[^"]*"[^>]*>[\s\S]*?</(?:div|article)>\s*(?:</div>)?"#
         if let cardRegex = try? NSRegularExpression(pattern: cardContainerPattern, options: .caseInsensitive) {
             let matches = cardRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
-            for m in matches.prefix(50) {
+            for m in matches {
                 let cardHTML = ns.substring(with: m.range)
                 
                 guard let link = extractRegex(pattern: #"<a[^>]+href="([^"]+)""#, in: cardHTML) else { continue }
@@ -1438,7 +1529,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         let linkPattern = #"<a[^>]+href="([^"]*(?:/manga/|/comics/|/series/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
         if let linkRegex = try? NSRegularExpression(pattern: linkPattern, options: .caseInsensitive) {
             let matches = linkRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
-            for m in matches.prefix(50) {
+            for m in matches {
                 guard m.numberOfRanges > 2 else { continue }
                 let link = ns.substring(with: m.range(at: 1))
                 let inner = ns.substring(with: m.range(at: 2))
@@ -1510,8 +1601,8 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     
     // MARK: - WordPress REST API (Tier 2 Fallback)
     
-    private func fetchWordPressTitles(subpath: String, orderby: String? = nil, searchQuery: String? = nil) async -> [MangaItem]? {
-        var queryItems = ["_embed=1", "per_page=20"]
+    private func fetchWordPressTitles(subpath: String, page: Int = 1, orderby: String? = nil, searchQuery: String? = nil) async -> [MangaItem]? {
+        var queryItems = ["_embed=1", "per_page=40", "page=\(page)"]
         if let order = orderby {
             queryItems.append("orderby=\(order)")
         }

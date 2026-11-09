@@ -16,10 +16,33 @@ private struct IdentifiableContinue: Identifiable {
 public struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
     @ObservedObject private var appState = AppState.shared
-    @State private var selectedContinueChapter: (manga: MangaItem, chapter: ChapterItem)? = nil
-    @State private var showSettingsQuickSheet = false
+    @State private var selectedReaderTarget: (manga: MangaItem, chapter: ChapterItem)? = nil
+    @State private var selectedMangaForDetail: MangaItem? = nil
     
     public init() {}
+    
+    private var groupedUpdates: [(dateString: String, entries: [MangaUpdateEntry])] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: viewModel.updateEntries) { entry -> Date in
+            calendar.startOfDay(for: entry.date)
+        }
+        let sortedKeys = grouped.keys.sorted(by: >)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d, yyyy"
+        
+        return sortedKeys.map { dayStart in
+            let label: String
+            if calendar.isDateInToday(dayStart) {
+                label = "Today"
+            } else if calendar.isDateInYesterday(dayStart) {
+                label = "Yesterday"
+            } else {
+                label = dateFormatter.string(from: dayStart)
+            }
+            let entries = grouped[dayStart]?.sorted(by: { $0.chapterNumber > $1.chapterNumber }) ?? []
+            return (dateString: label, entries: entries)
+        }
+    }
     
     public var body: some View {
         NavigationStack {
@@ -31,12 +54,12 @@ public struct HomeView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     
-                    // Main Content: Updates or Kaomoji Empty State
-                    if viewModel.latestUpdates.isEmpty && !viewModel.isLoading {
+                    // Main Content: Grouped Updates or Kaomoji Empty State
+                    if viewModel.updateEntries.isEmpty && !viewModel.isLoading {
                         kaomojiEmptyState
                             .padding(.top, 60)
                     } else {
-                        updatesList
+                        updatesGroupedList
                     }
                 }
                 .padding(.horizontal, 12)
@@ -62,7 +85,9 @@ public struct HomeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
                         Button {
-                            viewModel.loadHomeData()
+                            Task {
+                                await viewModel.refreshLibraryUpdates()
+                            }
                         } label: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 13, weight: .semibold))
@@ -80,7 +105,9 @@ public struct HomeView: View {
                                 Label("Toggle Update Status", systemImage: "bell")
                             }
                             Button {
-                                viewModel.loadHomeData()
+                                Task {
+                                    await viewModel.refreshLibraryUpdates()
+                                }
                             } label: {
                                 Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
                             }
@@ -94,11 +121,14 @@ public struct HomeView: View {
                 }
             }
             .refreshable {
-                viewModel.loadHomeData()
+                await viewModel.refreshLibraryUpdates()
+            }
+            .navigationDestination(item: $selectedMangaForDetail) { manga in
+                MangaDetailView(manga: manga)
             }
             .fullScreenCover(item: Binding(
-                get: { selectedContinueChapter.map { IdentifiableContinue(manga: $0.manga, chapter: $0.chapter) } },
-                set: { selectedContinueChapter = $0.map { ($0.manga, $0.chapter) } }
+                get: { selectedReaderTarget.map { IdentifiableContinue(manga: $0.manga, chapter: $0.chapter) } },
+                set: { selectedReaderTarget = $0.map { ($0.manga, $0.chapter) } }
             )) { item in
                 ReaderContainerView(manga: item.manga, chapter: item.chapter)
             }
@@ -152,7 +182,7 @@ public struct HomeView: View {
     
     private var kaomojiEmptyState: some View {
         VStack(spacing: 14) {
-            Text("(ˇ•_•ˇ)")
+            Text("(¯\\_(ツ)_/¯)")
                 .font(.system(size: 38, weight: .medium, design: .rounded))
                 .foregroundColor(.textSecondary)
             
@@ -165,7 +195,9 @@ public struct HomeView: View {
                 .foregroundColor(.textSecondary)
             
             Button {
-                viewModel.loadHomeData()
+                Task {
+                    await viewModel.refreshLibraryUpdates()
+                }
             } label: {
                 Text("Refresh")
                     .font(.system(size: 13, weight: .bold))
@@ -181,53 +213,118 @@ public struct HomeView: View {
         .padding(.vertical, 40)
     }
     
-    // MARK: - Updates List
+    // MARK: - Grouped Updates List
     
-    private var updatesList: some View {
-        LazyVStack(spacing: 8) {
-            ForEach(viewModel.latestUpdates) { manga in
-                NavigationLink(destination: MangaDetailView(manga: manga)) {
-                    HStack(spacing: 12) {
-                        AsyncMangaImage(
-                            url: manga.coverURL,
-                            contentMode: .fill,
-                            cornerRadius: 6,
-                            showShimmer: false
-                        )
-                        .frame(width: 48, height: 68)
-                        .clipped()
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(manga.title)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.textPrimary)
-                                .lineLimit(1)
-                            
-                            Text("New Chapter Available")
-                                .font(.system(size: 12))
-                                .foregroundColor(.mangaAccent)
-                            
-                            Text(manga.status.rawValue)
-                                .font(.system(size: 11))
-                                .foregroundColor(.textTertiary)
-                        }
-                        
-                        Spacer()
-                        
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.textTertiary)
+    private var updatesGroupedList: some View {
+        LazyVStack(alignment: .leading, spacing: 14) {
+            ForEach(groupedUpdates, id: \.dateString) { group in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.dateString)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.textSecondary)
+                        .padding(.horizontal, 4)
+                        .padding(.top, 4)
+                    
+                    ForEach(group.entries) { entry in
+                        updateRow(for: entry)
                     }
-                    .padding(8)
-                    .background(Color.surfacePrimary)
-                    .cornerRadius(10)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
             }
         }
+    }
+    
+    private func updateRow(for entry: MangaUpdateEntry) -> some View {
+        HStack(spacing: 12) {
+            // Tap Cover -> Open MangaDetailView
+            Button {
+                selectedMangaForDetail = getManga(for: entry)
+            } label: {
+                AsyncMangaImage(
+                    url: entry.coverURL,
+                    contentMode: .fill,
+                    cornerRadius: 6,
+                    showShimmer: false
+                )
+                .frame(width: 48, height: 68)
+                .clipped()
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // Tap Row Info -> Open ReaderContainerView
+            Button {
+                let manga = getManga(for: entry)
+                let chapter = getChapter(for: entry)
+                selectedReaderTarget = (manga, chapter)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(entry.mangaTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(1)
+                    
+                    Text(entry.chapterTitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(.mangaAccent)
+                        .lineLimit(1)
+                    
+                    Text("Chapter \(HomeViewModel.formatChapterNum(entry.chapterNumber))")
+                        .font(.system(size: 11))
+                        .foregroundColor(.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // Trailing Download Button
+            Button {
+                if !viewModel.isChapterDownloaded(entry) {
+                    viewModel.downloadChapter(for: entry)
+                }
+            } label: {
+                Image(systemName: viewModel.isChapterDownloaded(entry) ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .font(.system(size: 20))
+                    .foregroundColor(viewModel.isChapterDownloaded(entry) ? .mangaGreen : .textSecondary)
+                    .padding(6)
+            }
+            .buttonStyle(BorderlessButtonStyle())
+        }
+        .padding(8)
+        .background(Color.surfacePrimary)
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+    
+    // MARK: - Resolvers
+    
+    private func getManga(for entry: MangaUpdateEntry) -> MangaItem {
+        if let found = DatabaseManager.shared.mangaList.first(where: { $0.id == entry.mangaID }) {
+            return found
+        }
+        if let found = LibraryRepository.shared.libraryItems.first(where: { $0.id == entry.mangaID }) {
+            return found
+        }
+        return MangaItem(
+            id: entry.mangaID,
+            sourceID: entry.sourceID,
+            urlOrSlug: "",
+            title: entry.mangaTitle,
+            coverURL: entry.coverURL
+        )
+    }
+    
+    private func getChapter(for entry: MangaUpdateEntry) -> ChapterItem {
+        if let found = DatabaseManager.shared.chaptersList.first(where: { $0.id == entry.chapterID }) {
+            return found
+        }
+        return ChapterItem(
+            id: entry.chapterID,
+            mangaID: entry.mangaID,
+            sourceChapterID: "\(entry.chapterNumber)",
+            chapterNumber: entry.chapterNumber,
+            title: entry.chapterTitle
+        )
     }
 }

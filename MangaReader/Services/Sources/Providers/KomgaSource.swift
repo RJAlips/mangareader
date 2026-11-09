@@ -54,7 +54,7 @@ public final class KomgaSource: MangaSource, @unchecked Sendable {
         var comps = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         comps?.queryItems = [
             URLQueryItem(name: "page", value: "\(max(0, page - 1))"),
-            URLQueryItem(name: "size", value: "20"),
+            URLQueryItem(name: "size", value: "40"),
             URLQueryItem(name: "sort", value: "booksCount,desc")
         ]
         guard let url = comps?.url else { throw NetworkError.invalidURL }
@@ -69,7 +69,7 @@ public final class KomgaSource: MangaSource, @unchecked Sendable {
         var comps = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
         comps?.queryItems = [
             URLQueryItem(name: "page", value: "\(max(0, page - 1))"),
-            URLQueryItem(name: "size", value: "20")
+            URLQueryItem(name: "size", value: "40")
         ]
         guard let url = comps?.url else { throw NetworkError.invalidURL }
         
@@ -84,7 +84,7 @@ public final class KomgaSource: MangaSource, @unchecked Sendable {
         comps?.queryItems = [
             URLQueryItem(name: "search", value: query),
             URLQueryItem(name: "page", value: "\(max(0, page - 1))"),
-            URLQueryItem(name: "size", value: "20")
+            URLQueryItem(name: "size", value: "40")
         ]
         guard let url = comps?.url else { throw NetworkError.invalidURL }
         

@@ -13,8 +13,11 @@ public struct SourceDetailView: View {
     @State private var searchQuery: String = ""
     @State private var selectedTab: Int = 0 // 0 = Popular, 1 = Latest
     @State private var isLoading: Bool = false
+    @State private var isLoadingMore: Bool = false
     @State private var currentPage: Int = 1
+    @State private var hasMorePages: Bool = true
     @State private var currentFetchTask: Task<Void, Never>? = nil
+    @State private var searchDebounceTask: Task<Void, Never>? = nil
     
     private let columns = [
         GridItem(.adaptive(minimum: 105, maximum: 140), spacing: Theme.Spacing.md, alignment: .top)
@@ -48,20 +51,27 @@ public struct SourceDetailView: View {
                 .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.top, Theme.Spacing.sm)
                 .onSubmit {
-                    performSearch()
+                    searchDebounceTask?.cancel()
+                    performSearch(reset: true)
+                }
+                .onChange(of: searchQuery) { _, newValue in
+                    scheduleDebouncedSearch(newValue)
                 }
             
-            // Tab Picker
-            Picker("Mode", selection: $selectedTab) {
-                Text("Popular").tag(0)
-                Text("Latest").tag(1)
-            }
-            .pickerStyle(SegmentedPickerStyle())
-            .padding(.horizontal, Theme.Spacing.lg)
-            .padding(.vertical, Theme.Spacing.sm)
-            .onChange(of: selectedTab) {
-                currentPage = 1
-                loadData()
+            // Tab Picker (hidden or disabled if actively searching)
+            if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Picker("Mode", selection: $selectedTab) {
+                    Text("Popular").tag(0)
+                    Text("Latest").tag(1)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.vertical, Theme.Spacing.sm)
+                .onChange(of: selectedTab) { _, _ in
+                    currentPage = 1
+                    hasMorePages = true
+                    loadData()
+                }
             }
             
             // Content
@@ -94,7 +104,13 @@ public struct SourceDetailView: View {
                     
                     HStack(spacing: 12) {
                         Button {
-                            loadData()
+                            currentPage = 1
+                            hasMorePages = true
+                            if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                loadData()
+                            } else {
+                                performSearch(reset: true)
+                            }
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "arrow.clockwise")
@@ -142,9 +158,29 @@ public struct SourceDetailView: View {
                                 )
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .onAppear {
+                                if manga.id == items.suffix(4).first?.id || manga.id == items.last?.id {
+                                    loadNextPage()
+                                }
+                            }
                         }
                     }
                     .padding(Theme.Spacing.lg)
+                    
+                    if isLoadingMore {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                            .padding(.vertical, 16)
+                    }
+                }
+                .refreshable {
+                    currentPage = 1
+                    hasMorePages = true
+                    if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        loadData()
+                    } else {
+                        performSearch(reset: true)
+                    }
                 }
             }
         }
@@ -169,6 +205,23 @@ public struct SourceDetailView: View {
         }
         .onDisappear {
             currentFetchTask?.cancel()
+            searchDebounceTask?.cancel()
+        }
+    }
+    
+    private func scheduleDebouncedSearch(_ query: String) {
+        searchDebounceTask?.cancel()
+        searchDebounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                currentPage = 1
+                hasMorePages = true
+                loadData()
+            } else {
+                performSearch(reset: true)
+            }
         }
     }
     
@@ -177,17 +230,22 @@ public struct SourceDetailView: View {
         currentFetchTask?.cancel()
         currentFetchTask = Task { @MainActor in
             isLoading = true
+            currentPage = 1
+            hasMorePages = true
             defer { isLoading = false }
             
             do {
                 let result: [MangaItem]
                 if selectedTab == 0 {
-                    result = try await source.fetchPopular(page: currentPage)
+                    result = try await source.fetchPopular(page: 1)
                 } else {
-                    result = try await source.fetchLatest(page: currentPage)
+                    result = try await source.fetchLatest(page: 1)
                 }
                 if !Task.isCancelled {
                     self.items = result
+                    if result.count < 10 {
+                        self.hasMorePages = false
+                    }
                 }
             } catch {
                 // Keep existing items if reload fails
@@ -196,7 +254,7 @@ public struct SourceDetailView: View {
     }
     
     @MainActor
-    private func performSearch() {
+    private func performSearch(reset: Bool) {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             loadData()
@@ -205,16 +263,67 @@ public struct SourceDetailView: View {
         
         currentFetchTask?.cancel()
         currentFetchTask = Task { @MainActor in
-            isLoading = true
+            if reset {
+                isLoading = true
+                currentPage = 1
+                hasMorePages = true
+            }
             defer { isLoading = false }
             
             do {
                 let results = try await source.search(query: trimmed, page: 1)
                 if !Task.isCancelled {
                     self.items = results
+                    if results.count < 10 {
+                        self.hasMorePages = false
+                    }
                 }
             } catch {
                 // Keep existing or empty
+            }
+        }
+    }
+    
+    @MainActor
+    private func loadNextPage() {
+        guard !isLoading && !isLoadingMore && hasMorePages else { return }
+        isLoadingMore = true
+        let nextPage = currentPage + 1
+        
+        Task { @MainActor in
+            defer { isLoadingMore = false }
+            do {
+                let results: [MangaItem]
+                let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    results = try await source.search(query: trimmed, page: nextPage)
+                } else if selectedTab == 0 {
+                    results = try await source.fetchPopular(page: nextPage)
+                } else {
+                    results = try await source.fetchLatest(page: nextPage)
+                }
+                
+                if !Task.isCancelled {
+                    if results.isEmpty {
+                        self.hasMorePages = false
+                    } else {
+                        let existingIDs = Set(self.items.map { $0.id })
+                        let existingSlugs = Set(self.items.map { $0.urlOrSlug })
+                        let newItems = results.filter { !existingIDs.contains($0.id) && !existingSlugs.contains($0.urlOrSlug) }
+                        
+                        if newItems.isEmpty {
+                            self.hasMorePages = false
+                        } else {
+                            self.items.append(contentsOf: newItems)
+                            self.currentPage = nextPage
+                            if results.count < 10 {
+                                self.hasMorePages = false
+                            }
+                        }
+                    }
+                }
+            } catch {
+                self.hasMorePages = false
             }
         }
     }
