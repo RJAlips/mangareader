@@ -1391,6 +1391,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         if let linkRegex = try? NSRegularExpression(pattern: linkPattern, options: .caseInsensitive) {
             let matches = linkRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
             for m in matches.prefix(50) {
+                guard m.numberOfRanges > 2 else { continue }
                 let link = ns.substring(with: m.range(at: 1))
                 let inner = ns.substring(with: m.range(at: 2))
                 
@@ -1519,6 +1520,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
             let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
             for match in matches {
+                guard match.numberOfRanges > 2 else { continue }
                 var link = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                 let inner = nsString.substring(with: match.range(at: 2))
                 
@@ -1568,6 +1570,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             if let regex = try? NSRegularExpression(pattern: standardPattern, options: .caseInsensitive) {
                 let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
                 for match in matches {
+                    guard match.numberOfRanges > 2 else { continue }
                     var link = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                     if !link.hasPrefix("http") {
                         link = "\(baseURLString)/\(link.trimmingCharacters(in: CharacterSet(charactersIn: "/")))"
@@ -1621,14 +1624,18 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
         let ns = text as NSString
         guard let first = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
-        return ns.substring(with: first.range(at: 1))
+        let r = first.numberOfRanges > 1 ? first.range(at: 1) : first.range(at: 0)
+        guard r.location != NSNotFound else { return nil }
+        return ns.substring(with: r)
     }
     
     private static func extractRegexFirst(pattern: String, in text: String) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
         let ns = text as NSString
         guard let first = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
-        return ns.substring(with: first.range(at: 1))
+        let r = first.numberOfRanges > 1 ? first.range(at: 1) : first.range(at: 0)
+        guard r.location != NSNotFound else { return nil }
+        return ns.substring(with: r)
     }
 }
 
