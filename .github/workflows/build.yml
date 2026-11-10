@@ -115,6 +115,14 @@ jobs:
                      CODE_SIGN_IDENTITY="" \
                      2>&1 | tee test_results.log || true
 
+      - name: Upload Test Results Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MangaReader-Test-Results
+          path: test_results.log
+          if-no-files-found: ignore
+
       - name: Upload Virtual Simulator Screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -144,3 +152,8 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "> *Download the **MangaReader-Simulator-Screenshots** artifact to view the full resolution PNGs directly on your computer.*" >> $GITHUB_STEP_SUMMARY
           fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧪 Automated Functional Integration Test Results:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          grep -E "(Test Suite|Test Case|Executed [0-9]+ tests|failed with|\*\* TEST)" test_results.log | tail -n 40 >> $GITHUB_STEP_SUMMARY || true
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

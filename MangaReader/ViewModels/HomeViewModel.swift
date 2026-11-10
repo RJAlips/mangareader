@@ -47,6 +47,8 @@ public struct MangaUpdateEntry: Identifiable, Codable, Equatable, Hashable {
 
 @MainActor
 public final class HomeViewModel: ObservableObject {
+    public static let shared = HomeViewModel()
+    
     @Published public private(set) var continueReading: [ContinueReadingItem] = []
     @Published public private(set) var recentlyAdded: [MangaItem] = []
     @Published public private(set) var popularManga: [MangaItem] = []

@@ -599,6 +599,21 @@ public final class DownloadManager: ObservableObject {
         }
     }
     
+    public func loadSavedDownloads() {
+        loadQueueFromDisk()
+        rebuildIndexFromDisk()
+        updateTotalStorageUsage()
+        updateFilteredTaskLists()
+    }
+    
+    public func resetInMemoryQueueForTesting() {
+        activeDownloadTasks.values.forEach { $0.cancel() }
+        activeDownloadTasks.removeAll()
+        tasks = []
+        activeQueueTasks = []
+        completedTasks = []
+    }
+    
     public func rebuildIndexFromDisk() {
         let downloadsDir = LocalStorageManager.shared.resolveURL(for: "Downloads")
         guard let mangaDirs = try? fileManager.contentsOfDirectory(at: downloadsDir, includingPropertiesForKeys: nil) else {

@@ -13,6 +13,10 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
     public var mangaID: UUID
     public var pageIndex: Int
     public var totalPages: Int
+    public var lastPageRead: Int {
+        get { pageIndex }
+        set { pageIndex = newValue }
+    }
     public var pageCount: Int {
         get { totalPages }
         set { totalPages = newValue }

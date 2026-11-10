@@ -31,7 +31,7 @@ public final class HistoryRepository: ObservableObject {
     @Published public var historyItems: [ReadingProgress] = []
     @Published public private(set) var continueReadingItems: [ContinueReadingItem] = []
     
-    private var historyFileURL: URL {
+    public var historyFileURL: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appendingPathComponent("reading_history.json")
     }
@@ -211,6 +211,10 @@ public final class HistoryRepository: ObservableObject {
         db.saveHistoryToDiskSync()
     }
     
+    public func removeHistory(mangaID: UUID) {
+        removeHistory(for: mangaID)
+    }
+    
     public func clearHistory() {
         historyItems.removeAll()
         continueReadingItems.removeAll()
@@ -220,5 +224,9 @@ public final class HistoryRepository: ObservableObject {
             db.updateProgress(chapterID: item.chapterID, mangaID: item.mangaID, pageIndex: 0, totalPages: 0)
         }
         db.saveHistoryToDiskSync()
+    }
+    
+    public func clearAllHistory() {
+        clearHistory()
     }
 }

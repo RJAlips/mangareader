@@ -31,6 +31,10 @@ public final class ReaderViewModel: ObservableObject {
     @Published public private(set) var pages: [URL] = []
     @Published public private(set) var chapterSegments: [ReaderChapterSegment] = []
     @Published public var currentPageIndex: Int = 0
+    public var currentPage: Int {
+        get { currentPageIndex }
+        set { currentPageIndex = newValue }
+    }
     @Published public var readingMode: ReadingMode
     @Published public var settings: ReaderSettings
     
@@ -107,6 +111,10 @@ public final class ReaderViewModel: ObservableObject {
     public var hasPreviousChapter: Bool {
         guard let idx = allMangaChapters.firstIndex(where: { $0.id == currentChapter.id }) else { return false }
         return idx > 0
+    }
+    
+    public func loadChapter() {
+        loadPages(for: currentChapter)
     }
     
     public func loadPages(for chapter: ChapterItem) {
