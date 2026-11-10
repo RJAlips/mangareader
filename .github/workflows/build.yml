@@ -94,7 +94,6 @@ jobs:
 
       # 3. Virtual Unit & Logic Integration Tests
       - name: Run Virtual Unit & Logic Tests
-        continue-on-error: true
         run: |
           DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone 16" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
           if [ -z "$DEVICE_ID" ]; then
@@ -104,6 +103,7 @@ jobs:
             DEVICE_ID=$(xcrun simctl list devices available | grep -m 1 "iPhone" | grep -o -E '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
           fi
           
+          set -o pipefail
           xcodebuild test \
                      -project MangaReader.xcodeproj \
                      -scheme MangaReader \
@@ -113,7 +113,7 @@ jobs:
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
-                     2>&1 | tee test_results.log || true
+                     2>&1 | tee test_results.log
 
       - name: Upload Test Results Log
         if: always()

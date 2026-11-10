@@ -92,6 +92,54 @@ public final class HistoryRepository: ObservableObject {
     // MARK: - Recording & Management
     
     public func recordReadingProgress(
+        mangaID: UUID,
+        chapterID: UUID,
+        page: Int,
+        totalPages: Int,
+        sourceID: String? = nil,
+        mangaTitle: String? = nil,
+        chapterTitle: String? = nil,
+        chapterNumber: Double? = nil,
+        coverURL: URL? = nil,
+        additionalDuration: TimeInterval = 0
+    ) {
+        if AppState.shared.incognitoMode {
+            return
+        }
+        
+        let now = Date()
+        var existingDuration: TimeInterval = 0
+        if let existing = historyItems.first(where: { $0.chapterID == chapterID }) {
+            existingDuration = existing.readingTimeSeconds
+        }
+        let totalDuration = existingDuration + additionalDuration
+        
+        let entry = ReadingProgress(
+            chapterID: chapterID,
+            mangaID: mangaID,
+            pageIndex: page,
+            totalPages: max(1, totalPages),
+            readingTimeSeconds: totalDuration,
+            updatedAt: now,
+            mangaTitle: mangaTitle,
+            chapterTitle: chapterTitle,
+            chapterNumber: chapterNumber,
+            coverURL: coverURL,
+            sourceID: sourceID
+        )
+        
+        historyItems.removeAll(where: { $0.chapterID == chapterID })
+        historyItems.insert(entry, at: 0)
+        
+        if historyItems.count > 300 {
+            historyItems = Array(historyItems.prefix(300))
+        }
+        
+        updateContinueReadingItems()
+        saveHistoryToDiskSync()
+    }
+    
+    public func recordReadingProgress(
         manga: MangaItem,
         chapter: ChapterItem,
         pageIndex: Int,
