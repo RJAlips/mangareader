@@ -68,6 +68,8 @@ public struct SourceDetailView: View {
                 .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.vertical, Theme.Spacing.sm)
                 .onChange(of: selectedTab) { _, _ in
+                    currentFetchTask?.cancel()
+                    items = []
                     currentPage = 1
                     hasMorePages = true
                     loadData()

@@ -63,13 +63,20 @@ public final class MangaDetailViewModel: ObservableObject {
     }
     
     public func loadChapters() {
-        // If chapters are already in DB, skip remote unless empty
+        // If chapters are already in DB, skip remote unless empty or only 1 chapter (which is often a preview)
         let existing = db.chapters(for: manga.id)
-        if !existing.isEmpty {
+        if existing.count > 1 {
             self.chapters = existing
             return
         }
+        if !existing.isEmpty {
+            self.chapters = existing
+        }
         
+        refreshChapters()
+    }
+    
+    public func refreshChapters() {
         guard let source = SourceManager.shared.provider(for: manga.sourceID) else { return }
         
         isLoadingChapters = true

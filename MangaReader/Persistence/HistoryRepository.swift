@@ -21,39 +21,165 @@ public struct ContinueReadingItem: Identifiable {
     }
 }
 
+@MainActor
 public final class HistoryRepository: ObservableObject {
     public static let shared = HistoryRepository()
     
     private let db = DatabaseManager.shared
     private var cancellables = Set<AnyCancellable>()
     
+    @Published public var historyItems: [ReadingProgress] = []
     @Published public private(set) var continueReadingItems: [ContinueReadingItem] = []
     
+    private var historyFileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent("reading_history.json")
+    }
+    
     private init() {
-        Publishers.CombineLatest3(db.$mangaList, db.$chaptersList, db.$historyList)
-            .map { mangas, chapters, history in
-                var results: [ContinueReadingItem] = []
-                let sortedHistory = history.sorted { $0.updatedAt > $1.updatedAt }
-                
-                var seenMangaIDs = Set<UUID>()
-                for entry in sortedHistory {
-                    guard !seenMangaIDs.contains(entry.mangaID) else { continue }
-                    if let manga = mangas.first(where: { $0.id == entry.mangaID }),
-                       let chapter = chapters.first(where: { $0.id == entry.chapterID }) {
-                        seenMangaIDs.insert(entry.mangaID)
-                        results.append(ContinueReadingItem(manga: manga, chapter: chapter, progress: entry))
-                    }
+        loadHistoryFromDisk()
+        updateContinueReadingItems()
+        
+        // Listen to database changes in case external updates occur
+        db.$historyList
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] dbHistory in
+                guard let self = self else { return }
+                if self.historyItems.isEmpty && !dbHistory.isEmpty {
+                    self.historyItems = dbHistory.sorted { $0.updatedAt > $1.updatedAt }
+                    self.updateContinueReadingItems()
+                    self.saveHistoryToDiskSync()
                 }
-                return results
-            }
-            .sink { [weak self] items in
-                self?.continueReadingItems = items
             }
             .store(in: &cancellables)
     }
     
+    // MARK: - Disk Persistence
+    
+    public func loadHistoryFromDisk() {
+        if FileManager.default.fileExists(atPath: historyFileURL.path) {
+            do {
+                let data = try Data(contentsOf: historyFileURL)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let items = try decoder.decode([ReadingProgress].self, from: data)
+                self.historyItems = items.sorted { $0.updatedAt > $1.updatedAt }
+            } catch {
+                print("[HistoryRepository] Failed to decode reading_history.json: \(error)")
+                self.historyItems = db.historyList.sorted { $0.updatedAt > $1.updatedAt }
+            }
+        } else {
+            // Seed from db.historyList if available
+            self.historyItems = db.historyList.sorted { $0.updatedAt > $1.updatedAt }
+            if !self.historyItems.isEmpty {
+                saveHistoryToDiskSync()
+            }
+        }
+    }
+    
+    public func saveHistoryToDiskSync() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(historyItems)
+            try data.write(to: historyFileURL, options: .atomic)
+        } catch {
+            print("[HistoryRepository] Failed to save reading_history.json: \(error)")
+        }
+    }
+    
+    // MARK: - Recording & Management
+    
+    public func recordReadingProgress(
+        manga: MangaItem,
+        chapter: ChapterItem,
+        pageIndex: Int,
+        totalPages: Int,
+        additionalDuration: TimeInterval = 0
+    ) {
+        if AppState.shared.incognitoMode {
+            return
+        }
+        
+        let now = Date()
+        var existingDuration: TimeInterval = 0
+        if let existing = historyItems.first(where: { $0.chapterID == chapter.id }) {
+            existingDuration = existing.readingTimeSeconds
+        }
+        let totalDuration = existingDuration + additionalDuration
+        
+        let entry = ReadingProgress(
+            chapterID: chapter.id,
+            mangaID: manga.id,
+            pageIndex: pageIndex,
+            totalPages: max(1, totalPages),
+            readingTimeSeconds: totalDuration,
+            updatedAt: now,
+            mangaTitle: manga.title,
+            chapterTitle: chapter.displayTitle,
+            chapterNumber: chapter.chapterNumber,
+            coverURL: manga.coverURL,
+            sourceID: manga.sourceID
+        )
+        
+        // Remove existing entry for this chapter and prepend newest
+        historyItems.removeAll(where: { $0.chapterID == chapter.id })
+        historyItems.insert(entry, at: 0)
+        
+        // Keep list bounded to 300 entries
+        if historyItems.count > 300 {
+            historyItems = Array(historyItems.prefix(300))
+        }
+        
+        // Sync to DatabaseManager
+        db.recordReadingProgress(
+            chapter: chapter,
+            manga: manga,
+            pageIndex: pageIndex,
+            isComplete: pageIndex >= max(0, totalPages - 1),
+            additionalDuration: additionalDuration
+        )
+        
+        updateContinueReadingItems()
+        saveHistoryToDiskSync()
+    }
+    
+    private func updateContinueReadingItems() {
+        var results: [ContinueReadingItem] = []
+        var seenMangaIDs = Set<UUID>()
+        
+        for entry in historyItems {
+            guard !seenMangaIDs.contains(entry.mangaID) else { continue }
+            seenMangaIDs.insert(entry.mangaID)
+            
+            // Resolve MangaItem from DB or create a robust fallback from entry
+            let manga = db.mangaList.first(where: { $0.id == entry.mangaID }) ?? MangaItem(
+                id: entry.mangaID,
+                sourceID: entry.sourceID ?? "",
+                urlOrSlug: "",
+                title: entry.displayMangaTitle,
+                coverURL: entry.coverURL
+            )
+            
+            // Resolve ChapterItem from DB or create a robust fallback from entry
+            let chapter = db.chaptersList.first(where: { $0.id == entry.chapterID }) ?? ChapterItem(
+                id: entry.chapterID,
+                mangaID: entry.mangaID,
+                sourceChapterID: "\(entry.chapterNumber ?? 1.0)",
+                chapterNumber: entry.chapterNumber ?? 1.0,
+                title: entry.displayChapterTitle,
+                pageCount: entry.totalPages
+            )
+            
+            results.append(ContinueReadingItem(manga: manga, chapter: chapter, progress: entry))
+        }
+        
+        self.continueReadingItems = results
+    }
+    
     public func readingProgress(for mangaID: UUID) -> ReadingProgress? {
-        return db.historyList.first(where: { $0.mangaID == mangaID })
+        return historyItems.first(where: { $0.mangaID == mangaID }) ?? db.historyList.first(where: { $0.mangaID == mangaID })
     }
     
     public func readingProgress(forMangaIdString idString: String) -> ReadingProgress? {
@@ -62,7 +188,7 @@ public final class HistoryRepository: ObservableObject {
     }
     
     public func readingDuration(for mangaID: UUID) -> String {
-        let entries = db.historyList.filter { $0.mangaID == mangaID }
+        let entries = historyItems.filter { $0.mangaID == mangaID }
         let totalSeconds = entries.reduce(0.0) { $0 + $1.readingTimeSeconds }
         let totalMinutes = max(1, Int(totalSeconds) / 60)
         let hours = totalMinutes / 60
@@ -75,26 +201,24 @@ public final class HistoryRepository: ObservableObject {
     }
     
     public func removeHistory(for mangaID: UUID) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            let filtered = self.db.historyList.filter { $0.mangaID != mangaID }
-            // Save updated history
-            for entry in self.db.historyList where entry.mangaID == mangaID {
-                self.db.updateProgress(chapterID: entry.chapterID, mangaID: entry.mangaID, pageIndex: 0, totalPages: 0)
-            }
-            self.continueReadingItems.removeAll(where: { $0.manga.id == mangaID })
-            self.db.saveHistoryToDiskSync()
+        historyItems.removeAll(where: { $0.mangaID == mangaID })
+        continueReadingItems.removeAll(where: { $0.manga.id == mangaID })
+        saveHistoryToDiskSync()
+        
+        for entry in db.historyList where entry.mangaID == mangaID {
+            db.updateProgress(chapterID: entry.chapterID, mangaID: entry.mangaID, pageIndex: 0, totalPages: 0)
         }
+        db.saveHistoryToDiskSync()
     }
     
     public func clearHistory() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            for item in self.db.historyList {
-                self.db.updateProgress(chapterID: item.chapterID, mangaID: item.mangaID, pageIndex: 0, totalPages: 0)
-            }
-            self.continueReadingItems.removeAll()
-            self.db.saveHistoryToDiskSync()
+        historyItems.removeAll()
+        continueReadingItems.removeAll()
+        saveHistoryToDiskSync()
+        
+        for item in db.historyList {
+            db.updateProgress(chapterID: item.chapterID, mangaID: item.mangaID, pageIndex: 0, totalPages: 0)
         }
+        db.saveHistoryToDiskSync()
     }
 }

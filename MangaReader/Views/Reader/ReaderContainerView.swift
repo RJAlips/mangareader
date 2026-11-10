@@ -89,6 +89,7 @@ public struct ReaderContainerView: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+            viewModel.saveReadingProgressOnExit()
         }
     }
 }

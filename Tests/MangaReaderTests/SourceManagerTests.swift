@@ -314,6 +314,66 @@ final class SourceManagerTests: XCTestCase {
             XCTAssertEqual(r.status, "PASS", "\(r.name) must have PASS status")
         }
     }
+    
+    func testPopularAndLatestQueryReturnItems() async throws {
+        let demo = DemoMangaSource()
+        let popular = try await demo.fetchPopular(page: 1)
+        let latest = try await demo.fetchLatest(page: 1)
+        
+        XCTAssertFalse(popular.isEmpty, "Popular manga items must not be empty")
+        XCTAssertFalse(latest.isEmpty, "Latest manga items must not be empty")
+        XCTAssertEqual(popular.count, latest.count)
+    }
+    
+    func testFetchChaptersReturnsMultipleChapters() async throws {
+        let demo = DemoMangaSource()
+        let chapters = try await demo.fetchChapters(for: "sample-solo-leveling")
+        XCTAssertGreaterThan(chapters.count, 1, "Chapters fetched must return multiple chapters without collapsing to 1")
+    }
+    
+    func testHistoryRecordingAndPersistence() {
+        let repo = HistoryRepository.shared
+        let mangaId = UUID()
+        let chapterId = UUID()
+        
+        repo.recordReadingProgress(
+            mangaID: mangaId,
+            chapterID: chapterId,
+            page: 5,
+            totalPages: 20,
+            sourceID: "com.mangareader.source.demo",
+            mangaTitle: "Test Solo Leveling",
+            chapterTitle: "Chapter 1 - Awakening",
+            chapterNumber: 1.0,
+            coverURL: URL(string: "https://example.com/cover.jpg")
+        )
+        
+        let found = repo.historyItems.first { $0.mangaID == mangaId }
+        XCTAssertNotNil(found, "Reading progress must be stored in HistoryRepository")
+        XCTAssertEqual(found?.pageIndex, 5)
+        XCTAssertEqual(found?.totalPages, 20)
+        XCTAssertEqual(found?.mangaTitle, "Test Solo Leveling")
+        XCTAssertEqual(found?.chapterTitle, "Chapter 1 - Awakening")
+        XCTAssertEqual(found?.sourceID, "com.mangareader.source.demo")
+        
+        // Cleanup
+        repo.removeHistory(mangaID: mangaId)
+        XCTAssertNil(repo.historyItems.first { $0.mangaID == mangaId })
+    }
+    
+    func testBrowseViewModelGlobalSearchInitialization() {
+        let vm = BrowseViewModel()
+        XCTAssertTrue(vm.globalSearchSections.isEmpty)
+        XCTAssertFalse(vm.isGlobalSearching)
+        
+        vm.performGlobalSearch(query: "Solo")
+        XCTAssertFalse(vm.globalSearchSections.isEmpty, "Global search must populate sections for active sources")
+        XCTAssertTrue(vm.isGlobalSearching, "Global search should be in progress")
+        
+        vm.clearSearch()
+        XCTAssertTrue(vm.globalSearchSections.isEmpty)
+        XCTAssertFalse(vm.isGlobalSearching)
+    }
 }
 
 private struct CommunityRepoIndexDTO: Decodable {

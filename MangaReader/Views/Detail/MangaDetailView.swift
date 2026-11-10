@@ -230,7 +230,7 @@ public struct MangaDetailView: View {
                     }
                     
                     // Global Search Pill
-                    NavigationLink(destination: BrowseView()) {
+                    NavigationLink(destination: GlobalSearchView(query: viewModel.manga.title)) {
                         HStack(spacing: 4) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 10))

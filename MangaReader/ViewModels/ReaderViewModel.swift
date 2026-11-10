@@ -79,8 +79,20 @@ public final class ReaderViewModel: ObservableObject {
             self.scrollTargetPageID = "\(chapter.id.uuidString)_page_\(chapter.lastPageRead)"
         }
         
+        // Ensure manga exists in DatabaseManager so relations are preserved
+        db.upsertManga(manga)
+        db.upsertChapters([chapter])
+        
         loadAllChapters()
         loadPages(for: chapter)
+        
+        // Record in HistoryRepository immediately on open
+        HistoryRepository.shared.recordReadingProgress(
+            manga: manga,
+            chapter: chapter,
+            pageIndex: self.currentPageIndex,
+            totalPages: max(1, chapter.pageCount)
+        )
     }
     
     private func loadAllChapters() {
@@ -110,6 +122,12 @@ public final class ReaderViewModel: ObservableObject {
             let segment = ReaderChapterSegment(id: chapter.id.uuidString, chapter: chapter, pageURLs: urls)
             self.chapterSegments = [segment]
             self.isLoadingPages = false
+            HistoryRepository.shared.recordReadingProgress(
+                manga: manga,
+                chapter: chapter,
+                pageIndex: currentPageIndex,
+                totalPages: max(1, urls.count)
+            )
             return
         }
         
@@ -119,6 +137,12 @@ public final class ReaderViewModel: ObservableObject {
             let segment = ReaderChapterSegment(id: chapter.id.uuidString, chapter: chapter, pageURLs: localPages)
             self.chapterSegments = [segment]
             self.isLoadingPages = false
+            HistoryRepository.shared.recordReadingProgress(
+                manga: manga,
+                chapter: chapter,
+                pageIndex: currentPageIndex,
+                totalPages: max(1, localPages.count)
+            )
             return
         }
         
@@ -128,6 +152,12 @@ public final class ReaderViewModel: ObservableObject {
             let segment = ReaderChapterSegment(id: chapter.id.uuidString, chapter: chapter, pageURLs: chapter.pageURLs)
             self.chapterSegments = [segment]
             self.isLoadingPages = false
+            HistoryRepository.shared.recordReadingProgress(
+                manga: manga,
+                chapter: chapter,
+                pageIndex: currentPageIndex,
+                totalPages: max(1, chapter.pageURLs.count)
+            )
             prefetchUpcomingPages()
             return
         }
@@ -162,6 +192,13 @@ public final class ReaderViewModel: ObservableObject {
                 updated.pageURLs = urls
                 updated.pageCount = urls.count
                 self.db.upsertChapters([updated])
+                
+                HistoryRepository.shared.recordReadingProgress(
+                    manga: self.manga,
+                    chapter: updated,
+                    pageIndex: self.currentPageIndex,
+                    totalPages: max(1, urls.count)
+                )
                 
                 self.prefetchUpcomingPages()
             } catch {
@@ -277,12 +314,12 @@ public final class ReaderViewModel: ObservableObject {
         let elapsed = max(0, min(300, Date().timeIntervalSince(sessionStartTime)))
         sessionStartTime = Date()
         
-        // Sync reading progress into database & library automatically
-        db.recordReadingProgress(
-            chapter: activeChapter,
+        // Sync reading progress into database & history automatically
+        HistoryRepository.shared.recordReadingProgress(
             manga: manga,
+            chapter: activeChapter,
             pageIndex: index,
-            isComplete: isLastPage,
+            totalPages: max(1, total),
             additionalDuration: elapsed
         )
         
@@ -367,5 +404,15 @@ public final class ReaderViewModel: ObservableObject {
                 }
             }
         }
+    }
+    
+    public func saveReadingProgressOnExit() {
+        let total = max(1, currentChapter.pageCount > 0 ? currentChapter.pageCount : pages.count)
+        HistoryRepository.shared.recordReadingProgress(
+            manga: manga,
+            chapter: currentChapter,
+            pageIndex: currentPageIndex,
+            totalPages: total
+        )
     }
 }

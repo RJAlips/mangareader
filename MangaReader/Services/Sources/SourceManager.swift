@@ -979,6 +979,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 "\(baseURLString)/manga/page/1/?m_orderby=views",
                 "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=views",
                 "\(baseURLString)/manga/?order=popular",
+                "\(baseURLString)/series/?order=popular",
                 "\(baseURLString)/manga/"
             ].compactMap { $0 }.compactMap { URL(string: $0) }
         } else {
@@ -998,6 +999,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 "\(baseURLString)/manga/page/\(page)/?m_orderby=views",
                 "\(baseURLString)/page/\(page)/?s=&post_type=wp-manga&m_orderby=views",
                 "\(baseURLString)/manga/?page=\(page)&order=popular",
+                "\(baseURLString)/series/?page=\(page)&order=popular",
                 "\(baseURLString)/manga/page/\(page)/",
                 "\(baseURLString)/manga/?page=\(page)"
             ].compactMap { $0 }.compactMap { URL(string: $0) }
@@ -1032,6 +1034,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 "\(baseURLString)/manga/page/1/?m_orderby=latest",
                 "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=latest",
                 "\(baseURLString)/manga/?order=update",
+                "\(baseURLString)/series/?order=update",
                 "\(baseURLString)/latest/",
                 "\(baseURLString)/manga/"
             ].compactMap { $0 }.compactMap { URL(string: $0) }
@@ -1052,6 +1055,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 "\(baseURLString)/manga/page/\(page)/?m_orderby=latest",
                 "\(baseURLString)/page/\(page)/?s=&post_type=wp-manga&m_orderby=latest",
                 "\(baseURLString)/manga/?page=\(page)&order=update",
+                "\(baseURLString)/series/?page=\(page)&order=update",
                 "\(baseURLString)/latest/page/\(page)/",
                 "\(baseURLString)/manga/page/\(page)/",
                 "\(baseURLString)/manga/?page=\(page)"
@@ -1234,42 +1238,81 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
         }
         
+        var bestHTMLChapters: [ChapterItem] = []
+        
         for url in candidateURLs {
             if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
                let html = String(data: htmlData, encoding: .utf8) {
                 var chapters = parseChaptersFromHTML(html, detailURL: url)
                 
-                // 1. If 0 chapters, try WP-Manga {detailURL}/ajax/chapters/ endpoint
-                if chapters.isEmpty, let ajaxURL = URL(string: "\(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/ajax/chapters/") {
-                    if let ajaxData = try? await client.fetchDataWithCDNHeaders(from: ajaxURL, refererOverride: url.absoluteString, timeoutInterval: requestTimeout),
+                // 1. If 0 or 1 chapter, try WP-Manga {detailURL}/ajax/chapters/ endpoint via POST
+                if chapters.count <= 1, let ajaxURL = URL(string: "\(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/ajax/chapters/") {
+                    var req = URLRequest(url: ajaxURL)
+                    req.httpMethod = "POST"
+                    req.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+                    req.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
+                    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+                    req.timeoutInterval = requestTimeout
+                    
+                    if let (ajaxData, resp) = try? await URLSession.shared.data(for: req),
+                       let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
                        let ajaxHTML = String(data: ajaxData, encoding: .utf8) {
-                        chapters = parseChaptersFromHTML(ajaxHTML, detailURL: url)
+                        let parsedAjax = parseChaptersFromHTML(ajaxHTML, detailURL: url)
+                        if parsedAjax.count > chapters.count {
+                            chapters = parsedAjax
+                        }
                     }
                 }
                 
-                // 2. If 0 chapters and post ID is present, try WP AJAX manga_get_chapters
-                if chapters.isEmpty, let postID = extractRegex(pattern: #"(?:manga_id|data-id|post_id)\s*=\s*['"]?(\d+)"#, in: html) {
-                    if let ajaxChapters = await fetchChaptersFromWPAJAX(mangaID: postID) {
+                // 2. If <= 1 chapter and post ID is present, try WP AJAX manga_get_chapters
+                if chapters.count <= 1, let postID = extractRegex(pattern: #"(?:manga_id|data-id|post_id|postid-)\s*=?\s*['"]?(\d+)"#, in: html) {
+                    if let ajaxChapters = await fetchChaptersFromWPAJAX(mangaID: postID), ajaxChapters.count > chapters.count {
                         chapters = ajaxChapters
                     }
                 }
                 
-                if !chapters.isEmpty {
-                    return chapters
+                if chapters.count > bestHTMLChapters.count {
+                    bestHTMLChapters = chapters
+                }
+                
+                if bestHTMLChapters.count > 1 {
+                    return bestHTMLChapters
                 }
             }
         }
         
-        let searchResults = try? await mangadex.search(query: urlOrSlug, page: 1)
-        if let bestMatch = searchResults?.first {
-            let mdChapters = (try? await mangadex.fetchChapters(for: bestMatch.urlOrSlug)) ?? []
-            if !mdChapters.isEmpty {
-                return mdChapters.map { ch in
-                    var mapped = ch
-                    mapped.scanlator = self.manifest.name
-                    return mapped
+        if bestHTMLChapters.count > 1 {
+            return bestHTMLChapters
+        }
+        
+        // Tier 3: MangaDex fallback matching title
+        let cleanTitle = formatTitleFromSlug(urlOrSlug)
+        let mdQueries = [cleanTitle, urlOrSlug]
+        var bestMDChapters: [ChapterItem] = []
+        
+        for q in mdQueries {
+            if let matches = try? await mangadex.search(query: q, page: 1), !matches.isEmpty {
+                for match in matches.prefix(3) {
+                    if let mdChapters = try? await mangadex.fetchChapters(for: match.urlOrSlug), mdChapters.count > bestMDChapters.count {
+                        bestMDChapters = mdChapters
+                    }
                 }
             }
+            if bestMDChapters.count > 1 {
+                break
+            }
+        }
+        
+        if bestMDChapters.count > bestHTMLChapters.count {
+            return bestMDChapters.map { ch in
+                var mapped = ch
+                mapped.scanlator = self.manifest.name
+                return mapped
+            }
+        }
+        
+        if !bestHTMLChapters.isEmpty {
+            return bestHTMLChapters
         }
         
         return [
@@ -1644,8 +1687,10 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
         request.setValue(baseURLString, forHTTPHeaderField: "Referer")
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         request.httpBody = "action=manga_get_chapters&manga=\(mangaID)".data(using: .utf8)
-        request.timeoutInterval = 6.0
+        request.timeoutInterval = 8.0
         
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
@@ -1663,69 +1708,128 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         let nsString = html as NSString
         let base = detailURL ?? URL(string: baseURLString)
         
-        let pattern = #"<a[^>]+href="([^"]*(?:chapter|episode|/series/\d+/[a-z0-9]+|/\d+/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-            let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
-            for match in matches {
-                guard match.numberOfRanges > 2 else { continue }
-                var link = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
-                let inner = nsString.substring(with: match.range(at: 2))
-                
-                let linkLower = link.lowercased()
-                if linkLower.contains(".png") || linkLower.contains(".jpg") || linkLower.contains(".jpeg") ||
-                   linkLower.contains(".webp") || linkLower.contains(".svg") || linkLower.contains(".gif") ||
-                   linkLower.contains(".ico") || linkLower.contains(".css") || linkLower.contains(".js") ||
-                   linkLower.contains("/wp-content/") || linkLower.contains("/wp-includes/") ||
-                   linkLower.contains("/genre/") || linkLower.contains("/tag/") || linkLower.contains("-release/") ||
-                   linkLower.contains("/author/") {
-                    continue
-                }
-                
-                if !link.hasPrefix("http") {
-                    if let base = base, let resolved = URL(string: link, relativeTo: base) {
-                        link = resolved.absoluteString
-                    } else {
-                        link = "\(baseURLString)/\(link.trimmingCharacters(in: CharacterSet(charactersIn: "/")))"
+        // Priority 1: Match structured chapter rows (Madara wp-manga-chapter, MangaThemesia eph-num, etc.)
+        let rowPattern = #"<(?:li|div)[^>]+class="[^"]*(?:wp-manga-chapter|eph-num|chbox|chapter-item|parent_chapter)[^"]*"[^>]*>([\s\S]*?)</(?:li|div)>"#
+        if let rowRegex = try? NSRegularExpression(pattern: rowPattern, options: .caseInsensitive) {
+            let rowMatches = rowRegex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
+            for rm in rowMatches {
+                guard rm.numberOfRanges > 1 else { continue }
+                let rowHTML = nsString.substring(with: rm.range(at: 1))
+                if let link = extractRegex(pattern: #"<a[^>]+href="([^"]+)""#, in: rowHTML) {
+                    var resolvedLink = link.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let linkLower = resolvedLink.lowercased()
+                    if linkLower.contains(".png") || linkLower.contains(".jpg") || linkLower.contains(".jpeg") ||
+                       linkLower.contains(".webp") || linkLower.contains(".svg") || linkLower.contains(".gif") ||
+                       linkLower.contains(".ico") || linkLower.contains(".css") || linkLower.contains(".js") ||
+                       linkLower.contains("/wp-content/") || linkLower.contains("/wp-includes/") ||
+                       linkLower.contains("/genre/") || linkLower.contains("/tag/") {
+                        continue
                     }
+                    if !resolvedLink.hasPrefix("http") {
+                        if let b = base, let resolved = URL(string: resolvedLink, relativeTo: b) {
+                            resolvedLink = resolved.absoluteString
+                        } else {
+                            resolvedLink = "\(baseURLString)/\(resolvedLink.trimmingCharacters(in: CharacterSet(charactersIn: "/")))"
+                        }
+                    }
+                    guard !seenLinks.contains(resolvedLink) else { continue }
+                    seenLinks.insert(resolvedLink)
+                    
+                    let cleanRow = rowHTML.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                    var num: Double = 1.0
+                    var numStr = "1"
+                    if let numMatch = extractRegex(pattern: #"(?:chapter|ch\.|ep\.|الفصل)\s*(\d+(?:\.\d+)?)"#, in: cleanRow) {
+                        numStr = numMatch
+                        num = Double(numMatch) ?? 1.0
+                    } else if let numMatch = extractRegex(pattern: #"(?:chapter|ch\.|ep\.|/|-)(\d+(?:\.\d+)?)"#, in: resolvedLink) {
+                        numStr = numMatch
+                        num = Double(numMatch) ?? 1.0
+                    } else if let anyNum = extractRegex(pattern: #"(\d+(?:\.\d+)?)"#, in: cleanRow) {
+                        numStr = anyNum
+                        num = Double(anyNum) ?? 1.0
+                    }
+                    
+                    let title = cleanRow.isEmpty ? "Chapter \(numStr)" : cleanRow
+                    chapters.append(ChapterItem(
+                        id: UUID(),
+                        mangaID: UUID(),
+                        sourceChapterID: resolvedLink,
+                        chapterNumber: num,
+                        title: title,
+                        scanlator: manifest.name,
+                        pageCount: 0,
+                        pageURLs: []
+                    ))
                 }
-                
-                guard !seenLinks.contains(link) else { continue }
-                seenLinks.insert(link)
-                
-                let cleanInner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
-                var num: Double = 1.0
-                var numStr = "1"
-                
-                if let numMatch = extractRegex(pattern: #"(?:chapter|ch\.|ep\.|الفصل)\s*(\d+(?:\.\d+)?)"#, in: cleanInner) {
-                    numStr = numMatch
-                    num = Double(numMatch) ?? 1.0
-                } else if let urlNumMatch = extractRegex(pattern: #"(?:chapter[/-]|episode[/-]|/)(\d+(?:\.\d+)?)"#, in: link) {
-                    numStr = urlNumMatch
-                    num = Double(urlNumMatch) ?? 1.0
-                } else if let anyNumMatch = extractRegex(pattern: #"(\d+(?:\.\d+)?)"#, in: cleanInner) {
-                    numStr = anyNumMatch
-                    num = Double(anyNumMatch) ?? 1.0
-                }
-                
-                if num > 10000 {
-                    num = 1.0
-                }
-                
-                let title = cleanInner.isEmpty ? "Chapter \(numStr)" : cleanInner
-                chapters.append(ChapterItem(
-                    id: UUID(),
-                    mangaID: UUID(),
-                    sourceChapterID: link,
-                    chapterNumber: num,
-                    title: title,
-                    scanlator: manifest.name,
-                    pageCount: 0,
-                    pageURLs: []
-                ))
             }
         }
         
-        // Also support standard pattern if the above was empty
+        // Priority 2: General anchor tags linking to chapters/episodes
+        if chapters.isEmpty {
+            let pattern = #"<a[^>]+href="([^"]*(?:chapter|episode|/series/\d+/[a-z0-9]+|/\d+/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsString.length))
+                for match in matches {
+                    guard match.numberOfRanges > 2 else { continue }
+                    var link = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let inner = nsString.substring(with: match.range(at: 2))
+                    
+                    let linkLower = link.lowercased()
+                    if linkLower.contains(".png") || linkLower.contains(".jpg") || linkLower.contains(".jpeg") ||
+                       linkLower.contains(".webp") || linkLower.contains(".svg") || linkLower.contains(".gif") ||
+                       linkLower.contains(".ico") || linkLower.contains(".css") || linkLower.contains(".js") ||
+                       linkLower.contains("/wp-content/") || linkLower.contains("/wp-includes/") ||
+                       linkLower.contains("/genre/") || linkLower.contains("/tag/") || linkLower.contains("-release/") ||
+                       linkLower.contains("/author/") {
+                        continue
+                    }
+                    
+                    if !link.hasPrefix("http") {
+                        if let b = base, let resolved = URL(string: link, relativeTo: b) {
+                            link = resolved.absoluteString
+                        } else {
+                            link = "\(baseURLString)/\(link.trimmingCharacters(in: CharacterSet(charactersIn: "/")))"
+                        }
+                    }
+                    
+                    guard !seenLinks.contains(link) else { continue }
+                    seenLinks.insert(link)
+                    
+                    let cleanInner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                    var num: Double = 1.0
+                    var numStr = "1"
+                    
+                    if let numMatch = extractRegex(pattern: #"(?:chapter|ch\.|ep\.|الفصل)\s*(\d+(?:\.\d+)?)"#, in: cleanInner) {
+                        numStr = numMatch
+                        num = Double(numMatch) ?? 1.0
+                    } else if let urlNumMatch = extractRegex(pattern: #"(?:chapter[/-]|episode[/-]|/)(\d+(?:\.\d+)?)"#, in: link) {
+                        numStr = urlNumMatch
+                        num = Double(urlNumMatch) ?? 1.0
+                    } else if let anyNumMatch = extractRegex(pattern: #"(\d+(?:\.\d+)?)"#, in: cleanInner) {
+                        numStr = anyNumMatch
+                        num = Double(anyNumMatch) ?? 1.0
+                    }
+                    
+                    if num > 10000 {
+                        num = 1.0
+                    }
+                    
+                    let title = cleanInner.isEmpty ? "Chapter \(numStr)" : cleanInner
+                    chapters.append(ChapterItem(
+                        id: UUID(),
+                        mangaID: UUID(),
+                        sourceChapterID: link,
+                        chapterNumber: num,
+                        title: title,
+                        scanlator: manifest.name,
+                        pageCount: 0,
+                        pageURLs: []
+                    ))
+                }
+            }
+        }
+        
+        // Priority 3: Standard Chapter / Ch. text regex if the above was empty
         if chapters.isEmpty {
             let standardPattern = #"<a[^>]+href="([^"]+)"[^>]*>[\s\S]*?(?:Chapter|Ch\.)\s*([\d\.]+)"#
             if let regex = try? NSRegularExpression(pattern: standardPattern, options: .caseInsensitive) {
@@ -1751,6 +1855,16 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                         pageCount: 0,
                         pageURLs: []
                     ))
+                }
+            }
+        }
+        
+        // Prevent all chapters collapsing to same number
+        if chapters.count > 1 {
+            let uniqueNums = Set(chapters.map { $0.chapterNumber })
+            if uniqueNums.count <= 1 {
+                for i in 0..<chapters.count {
+                    chapters[i].chapterNumber = Double(chapters.count - i)
                 }
             }
         }

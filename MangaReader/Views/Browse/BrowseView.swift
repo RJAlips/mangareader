@@ -40,7 +40,7 @@ public struct BrowseView: View {
                     .padding(.top, 4)
                     .padding(.bottom, 6)
                     .onSubmit {
-                        viewModel.performGlobalSearch()
+                        viewModel.performGlobalSearch(query: viewModel.globalQuery)
                     }
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -84,14 +84,10 @@ public struct BrowseView: View {
                 // Right Glass Capsule Toolbar
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
-                        Button {
-                            withAnimation(Theme.Animation.quick) {
-                                showSearchField.toggle()
-                            }
-                        } label: {
+                        NavigationLink(destination: GlobalSearchView()) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(showSearchField ? .mangaAccent : .textPrimary)
+                                .foregroundColor(.textPrimary)
                         }
                         
                         Rectangle()
@@ -545,27 +541,110 @@ public struct BrowseView: View {
     
     private var globalSearchResultsView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                ForEach(Array(viewModel.globalSearchResults.keys.sorted()), id: \.self) { sourceName in
-                    if let results = viewModel.globalSearchResults[sourceName], !results.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(sourceName)
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if viewModel.isGlobalSearching {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                            .scaleEffect(0.8)
+                        Text("Searching across active extensions...")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.textSecondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                }
+                
+                ForEach(viewModel.globalSearchSections) { section in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text(section.sourceName)
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundColor(.textPrimary)
-                                .padding(.horizontal, 12)
                             
+                            Text(section.sourceLang)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.textSecondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.surfaceSecondary)
+                                .clipShape(Capsule())
+                            
+                            if case .loaded(let items) = section.state {
+                                Text("\(items.count)")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.mangaAccent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.mangaAccent.opacity(0.15))
+                                    .clipShape(Capsule())
+                            }
+                            
+                            Spacer()
+                            
+                            if let provider = SourceManager.shared.provider(for: section.id) {
+                                NavigationLink(destination: SourceDetailView(source: provider)) {
+                                    HStack(spacing: 3) {
+                                        Text("Open")
+                                        Image(systemName: "chevron.right")
+                                    }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.mangaAccent)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        
+                        switch section.state {
+                        case .loading:
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 10) {
-                                    ForEach(results) { manga in
+                                    ForEach(0..<4, id: \.self) { _ in
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(Color.surfacePrimary)
+                                            .frame(width: 115, height: 160)
+                                            .overlay(
+                                                ProgressView()
+                                                    .progressViewStyle(CircularProgressViewStyle(tint: .textTertiary))
+                                                    .scaleEffect(0.8)
+                                            )
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                            }
+                        case .loaded(let items):
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 10) {
+                                    ForEach(items) { manga in
                                         NavigationLink(destination: MangaDetailView(manga: manga)) {
-                                            MangaCardView(manga: manga, showUnreadBadge: false)
-                                                .frame(width: 120)
+                                            MangaCardView(manga: manga, baseURL: URL(string: section.baseURL), showUnreadBadge: false)
+                                                .frame(width: 115)
                                         }
                                         .buttonStyle(PlainButtonStyle())
                                     }
                                 }
                                 .padding(.horizontal, 12)
                             }
+                        case .empty:
+                            Text("No results found on this source")
+                                .font(.caption)
+                                .foregroundColor(.textTertiary)
+                                .padding(.horizontal, 12)
+                        case .failed(let err):
+                            HStack {
+                                Text("Failed: \(err)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Button("Retry") {
+                                    viewModel.retryGlobalSearch(for: section.id)
+                                }
+                                .font(.caption.bold())
+                                .foregroundColor(.mangaAccent)
+                            }
+                            .padding(.horizontal, 12)
                         }
                     }
                 }
@@ -807,6 +886,211 @@ public struct RepositoryManagementSheet: View {
                 self.isLoading = false
                 self.isSuccess = false
                 self.statusMessage = "Failed: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+// MARK: - Dedicated Global Search View (Mihon & Tachimanga UX)
+
+public struct GlobalSearchView: View {
+    @StateObject private var viewModel = BrowseViewModel()
+    @ObservedObject private var appState = AppState.shared
+    @State private var query: String
+    
+    public init(query: String = "") {
+        _query = State(initialValue: query)
+    }
+    
+    public var body: some View {
+        VStack(spacing: 0) {
+            // Search Input Header
+            SearchBarView(
+                text: $query,
+                placeholder: "Search all active sources..."
+            )
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+            .onSubmit {
+                viewModel.performGlobalSearch(query: query)
+            }
+            .onChange(of: query) { _, newValue in
+                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.clearSearch()
+                }
+            }
+            
+            // Streaming Content
+            if viewModel.globalSearchSections.isEmpty && !viewModel.isGlobalSearching {
+                // Empty search state
+                Spacer()
+                VStack(spacing: 14) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 48))
+                        .foregroundColor(.textTertiary)
+                    
+                    VStack(spacing: 6) {
+                        Text(query.isEmpty ? "Global Source Search" : "No Sources Searched")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.textPrimary)
+                        Text(query.isEmpty ? "Search across all installed and active extensions simultaneously." : "Press search to query enabled sources.")
+                            .font(.caption)
+                            .foregroundColor(.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                }
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        if viewModel.isGlobalSearching {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .mangaAccent))
+                                    .scaleEffect(0.8)
+                                Text("Searching across active extensions...")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.textSecondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 4)
+                        }
+                        
+                        ForEach(viewModel.globalSearchSections) { section in
+                            globalSearchSectionRow(section: section)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.bottom, 60)
+                }
+            }
+        }
+        .background(appState.currentBackground.ignoresSafeArea())
+        .navigationTitle("Global Search")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if !query.isEmpty && viewModel.globalSearchSections.isEmpty {
+                viewModel.performGlobalSearch(query: query)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func globalSearchSectionRow(section: GlobalSearchSection) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack(spacing: 8) {
+                Text(section.sourceName)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.textPrimary)
+                
+                // Lang pill
+                Text(section.sourceLang)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.surfaceSecondary)
+                    .clipShape(Capsule())
+                
+                // Loaded Count Badge
+                if case .loaded(let items) = section.state {
+                    Text("\(items.count)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.mangaAccent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.mangaAccent.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                
+                Spacer()
+                
+                if let provider = SourceManager.shared.provider(for: section.id) {
+                    NavigationLink(destination: SourceDetailView(source: provider)) {
+                        HStack(spacing: 3) {
+                            Text("Open")
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.mangaAccent)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            
+            // Section Body based on state
+            switch section.state {
+            case .loading:
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.surfacePrimary)
+                                .frame(width: 110, height: 160)
+                                .overlay(
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .textTertiary))
+                                        .scaleEffect(0.8)
+                                )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                
+            case .loaded(let items):
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(items) { manga in
+                            NavigationLink(destination: MangaDetailView(manga: manga)) {
+                                MangaCardView(
+                                    manga: manga,
+                                    baseURL: URL(string: section.baseURL),
+                                    showUnreadBadge: false
+                                )
+                                .frame(width: 115)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                
+            case .empty:
+                HStack(spacing: 6) {
+                    Image(systemName: "slash.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.textTertiary)
+                    Text("No results found on this source")
+                        .font(.caption)
+                        .foregroundColor(.textTertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                
+            case .failed(let message):
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.orange)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.textSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button {
+                        viewModel.retryGlobalSearch(for: section.id)
+                    } label: {
+                        Text("Retry")
+                            .font(.caption.bold())
+                            .foregroundColor(.mangaAccent)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
             }
         }
     }

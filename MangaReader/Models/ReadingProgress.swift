@@ -20,13 +20,25 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
     public var readingTimeSeconds: TimeInterval
     public var updatedAt: Date
     
+    // Stored metadata for independent history display & offline persistence
+    public var mangaTitle: String?
+    public var chapterTitle: String?
+    public var chapterNumber: Double?
+    public var coverURL: URL?
+    public var sourceID: String?
+    
     public init(
         chapterID: UUID,
         mangaID: UUID,
         pageIndex: Int,
         totalPages: Int,
         readingTimeSeconds: TimeInterval = 0,
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        mangaTitle: String? = nil,
+        chapterTitle: String? = nil,
+        chapterNumber: Double? = nil,
+        coverURL: URL? = nil,
+        sourceID: String? = nil
     ) {
         self.chapterID = chapterID
         self.mangaID = mangaID
@@ -34,6 +46,11 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
         self.totalPages = totalPages
         self.readingTimeSeconds = readingTimeSeconds
         self.updatedAt = updatedAt
+        self.mangaTitle = mangaTitle
+        self.chapterTitle = chapterTitle
+        self.chapterNumber = chapterNumber
+        self.coverURL = coverURL
+        self.sourceID = sourceID
     }
     
     public var progressPercent: Double {
@@ -50,5 +67,26 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
         } else {
             return "\(minutes) m"
         }
+    }
+    
+    public var displayMangaTitle: String {
+        if let title = mangaTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return title
+        }
+        return "Manga"
+    }
+    
+    public var displayChapterTitle: String {
+        if let title = chapterTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return title
+        }
+        if let num = chapterNumber {
+            if num.truncatingRemainder(dividingBy: 1) == 0 {
+                return "Chapter \(Int(num))"
+            } else {
+                return "Chapter \(num)"
+            }
+        }
+        return "Chapter"
     }
 }

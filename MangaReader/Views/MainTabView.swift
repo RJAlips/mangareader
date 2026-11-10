@@ -163,13 +163,14 @@ public struct HistoryView: View {
     
     public init() {}
     
-    private var filteredItems: [ContinueReadingItem] {
+    private var filteredItems: [ReadingProgress] {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if q.isEmpty {
-            return historyRepo.continueReadingItems
+            return historyRepo.historyItems
         }
-        return historyRepo.continueReadingItems.filter {
-            $0.manga.title.lowercased().contains(q) || $0.chapter.displayTitle.lowercased().contains(q)
+        return historyRepo.historyItems.filter {
+            $0.displayMangaTitle.lowercased().contains(q) ||
+            $0.displayChapterTitle.lowercased().contains(q)
         }
     }
     
@@ -279,12 +280,15 @@ public struct HistoryView: View {
         }
     }
     
-    private func historyRow(item: ContinueReadingItem) -> some View {
-        HStack(spacing: 12) {
+    private func historyRow(item: ReadingProgress) -> some View {
+        let manga = getManga(for: item)
+        let chapter = getChapter(for: item)
+        
+        return HStack(spacing: 12) {
             // Cover Image (68x96pt, cornerRadius: 8)
-            NavigationLink(destination: MangaDetailView(manga: item.manga)) {
+            NavigationLink(destination: MangaDetailView(manga: manga)) {
                 AsyncMangaImage(
-                    url: item.manga.coverURL,
+                    url: item.coverURL,
                     contentMode: .fill,
                     cornerRadius: 8,
                     showShimmer: false
@@ -294,46 +298,64 @@ public struct HistoryView: View {
             }
             .buttonStyle(PlainButtonStyle())
             
-            // Metadata
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.manga.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.textPrimary)
-                    .lineLimit(2)
-                
-                Text(item.chapter.displayTitle)
-                    .font(.system(size: 13))
-                    .foregroundColor(.textSecondary)
-                    .lineLimit(1)
-                
-                // Reading Duration Row
-                HStack(spacing: 4) {
-                    Image(systemName: "book")
-                        .font(.system(size: 10))
-                        .foregroundColor(.textTertiary)
-                    Text(item.progress.formattedReadingTime)
-                        .font(.system(size: 11, weight: .medium))
+            // Metadata & Row Tap -> Reader
+            Button {
+                activeReadingManga = manga
+                activeReadingChapter = chapter
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.displayMangaTitle)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.textPrimary)
+                        .lineLimit(2)
+                    
+                    Text(item.displayChapterTitle)
+                        .font(.system(size: 13))
                         .foregroundColor(.textSecondary)
+                        .lineLimit(1)
+                    
+                    // Progress & Duration Row
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "book.pages")
+                                .font(.system(size: 10))
+                                .foregroundColor(.mangaAccent)
+                            Text("Page \(item.pageIndex + 1) / \(max(1, item.totalPages))")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.mangaAccent)
+                        }
+                        
+                        HStack(spacing: 4) {
+                            Image(systemName: "book")
+                                .font(.system(size: 10))
+                                .foregroundColor(.textTertiary)
+                            Text(item.formattedReadingTime)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.textSecondary)
+                        }
+                    }
+                    .padding(.top, 1)
+                    
+                    // Relative Date Row
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10))
+                            .foregroundColor(.textTertiary)
+                        Text(relativeTimeString(from: item.updatedAt))
+                            .font(.system(size: 11))
+                            .foregroundColor(.textTertiary)
+                    }
                 }
-                .padding(.top, 1)
-                
-                // Relative Date Row
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 10))
-                        .foregroundColor(.textTertiary)
-                    Text(relativeTimeString(from: item.progress.updatedAt))
-                        .font(.system(size: 11))
-                        .foregroundColor(.textTertiary)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .buttonStyle(PlainButtonStyle())
             
             Spacer()
             
             // Delete Entry Button & Resume Reading Button
             VStack(alignment: .trailing, spacing: 14) {
                 Button {
-                    historyRepo.removeHistory(for: item.manga.id)
+                    historyRepo.removeHistory(for: item.mangaID)
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 13))
@@ -342,8 +364,8 @@ public struct HistoryView: View {
                 }
                 
                 Button {
-                    activeReadingManga = item.manga
-                    activeReadingChapter = item.chapter
+                    activeReadingManga = manga
+                    activeReadingChapter = chapter
                 } label: {
                     Image(systemName: "play.circle.fill")
                         .font(.system(size: 22))
@@ -360,6 +382,34 @@ public struct HistoryView: View {
         )
     }
     
+    private func getManga(for progress: ReadingProgress) -> MangaItem {
+        if let found = DatabaseManager.shared.mangaList.first(where: { $0.id == progress.mangaID }) {
+            return found
+        }
+        return MangaItem(
+            id: progress.mangaID,
+            sourceID: progress.sourceID ?? "",
+            urlOrSlug: "",
+            title: progress.displayMangaTitle,
+            coverURL: progress.coverURL
+        )
+    }
+    
+    private func getChapter(for progress: ReadingProgress) -> ChapterItem {
+        if let found = DatabaseManager.shared.chaptersList.first(where: { $0.id == progress.chapterID }) {
+            return found
+        }
+        return ChapterItem(
+            id: progress.chapterID,
+            mangaID: progress.mangaID,
+            sourceChapterID: "\(progress.chapterNumber ?? 1.0)",
+            chapterNumber: progress.chapterNumber ?? 1.0,
+            title: progress.displayChapterTitle,
+            pageCount: progress.totalPages,
+            lastPageRead: progress.pageIndex
+        )
+    }
+    
     private func relativeTimeString(from date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
@@ -371,7 +421,7 @@ public struct HistoryView: View {
     private var emptyHistoryView: some View {
         VStack(spacing: 14) {
             Spacer()
-            Text("(ˇ•_•ˇ)")
+            Text("(¯\\_(ツ)_/¯)")
                 .font(.system(size: 38, weight: .medium, design: .rounded))
                 .foregroundColor(.textSecondary)
             Text("No Reading History")

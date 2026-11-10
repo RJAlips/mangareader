@@ -31,8 +31,20 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
     public func fetchPopular(page: Int) async throws -> [MangaItem] {
         let limit = 40
         let offset = max(0, (page - 1) * limit)
-        let endpoint = "\(baseURL)/manga?limit=\(limit)&offset=\(offset)&includes[]=cover_art&includes[]=author&order[followedCount]=desc&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica"
-        guard let url = URL(string: endpoint) else { throw NetworkError.invalidURL }
+        var comps = URLComponents(string: "\(baseURL)/manga")
+        comps?.queryItems = [
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "offset", value: "\(offset)"),
+            URLQueryItem(name: "includes[]", value: "cover_art"),
+            URLQueryItem(name: "includes[]", value: "author"),
+            URLQueryItem(name: "order[followedCount]", value: "desc"),
+            URLQueryItem(name: "order[rating]", value: "desc"),
+            URLQueryItem(name: "hasAvailableChapters", value: "true"),
+            URLQueryItem(name: "contentRating[]", value: "safe"),
+            URLQueryItem(name: "contentRating[]", value: "suggestive"),
+            URLQueryItem(name: "contentRating[]", value: "erotica")
+        ]
+        guard let url = comps?.url else { throw NetworkError.invalidURL }
         
         let response = try await client.fetchJSON(MangaDexResponse.self, from: url, headers: customUserAgent)
         return response.data.compactMap { self.parseManga(entry: $0) }
@@ -41,8 +53,19 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
     public func fetchLatest(page: Int) async throws -> [MangaItem] {
         let limit = 40
         let offset = max(0, (page - 1) * limit)
-        let endpoint = "\(baseURL)/manga?limit=\(limit)&offset=\(offset)&includes[]=cover_art&includes[]=author&order[latestUploadedChapter]=desc&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica"
-        guard let url = URL(string: endpoint) else { throw NetworkError.invalidURL }
+        var comps = URLComponents(string: "\(baseURL)/manga")
+        comps?.queryItems = [
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "offset", value: "\(offset)"),
+            URLQueryItem(name: "includes[]", value: "cover_art"),
+            URLQueryItem(name: "includes[]", value: "author"),
+            URLQueryItem(name: "order[latestUploadedChapter]", value: "desc"),
+            URLQueryItem(name: "hasAvailableChapters", value: "true"),
+            URLQueryItem(name: "contentRating[]", value: "safe"),
+            URLQueryItem(name: "contentRating[]", value: "suggestive"),
+            URLQueryItem(name: "contentRating[]", value: "erotica")
+        ]
+        guard let url = comps?.url else { throw NetworkError.invalidURL }
         
         let response = try await client.fetchJSON(MangaDexResponse.self, from: url, headers: customUserAgent)
         return response.data.compactMap { self.parseManga(entry: $0) }
@@ -141,7 +164,17 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
                     return nil
                 }
                 
-                let chNum = ch.attributes.chapter.flatMap { Double($0) } ?? 0.0
+                var chNum = ch.attributes.chapter.flatMap { Double($0) } ?? 0.0
+                if chNum == 0.0, let title = ch.attributes.title {
+                    if let match = title.range(of: #"(?:ch(?:apter)?|ep(?:isode)?)\s*(\d+(?:\.\d+)?)"#, options: [.regularExpression, .caseInsensitive]) {
+                        let sub = String(title[match])
+                        let numsOnly = sub.components(separatedBy: CharacterSet.decimalDigits.inverted).filter { !$0.isEmpty }
+                        if let firstNum = numsOnly.first, let d = Double(firstNum) {
+                            chNum = d
+                        }
+                    }
+                }
+                
                 return ChapterItem(
                     id: UUID(),
                     mangaID: UUID(),
@@ -165,11 +198,12 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
             }
         }
         
-        // Fallback: If English chapters are external or empty, fetch any language with hosted pages
-        if allChapters.isEmpty {
+        // Fallback: If English chapters are external, empty, or <= 1, fetch multi-language with hosted pages
+        if allChapters.count <= 1 {
             var fbOffset = 0
             var fbHasMore = true
             var fbTotal: Int? = nil
+            var multiLangBatch: [ChapterItem] = []
             
             while fbHasMore && fbOffset < (fbTotal ?? 10000) && fbOffset < 10000 {
                 let fallbackEndpoint = "\(baseURL)/manga/\(urlOrSlug)/feed?order[chapter]=desc&limit=\(limit)&offset=\(fbOffset)&includeEmptyPages=0&includeFuturePublishAt=0&includeExternalUrl=0"
@@ -189,7 +223,17 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
                     if let ext = ch.attributes.externalUrl, !ext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         return nil
                     }
-                    let chNum = ch.attributes.chapter.flatMap { Double($0) } ?? 0.0
+                    var chNum = ch.attributes.chapter.flatMap { Double($0) } ?? 0.0
+                    if chNum == 0.0, let title = ch.attributes.title {
+                        if let match = title.range(of: #"(?:ch(?:apter)?|ep(?:isode)?)\s*(\d+(?:\.\d+)?)"#, options: [.regularExpression, .caseInsensitive]) {
+                            let sub = String(title[match])
+                            let numsOnly = sub.components(separatedBy: CharacterSet.decimalDigits.inverted).filter { !$0.isEmpty }
+                            if let firstNum = numsOnly.first, let d = Double(firstNum) {
+                                chNum = d
+                            }
+                        }
+                    }
+                    
                     return ChapterItem(
                         id: UUID(),
                         mangaID: UUID(),
@@ -203,13 +247,17 @@ public final class MangaDexSource: MangaSource, @unchecked Sendable {
                         pageURLs: []
                     )
                 }
-                allChapters.append(contentsOf: fallbackBatch)
+                multiLangBatch.append(contentsOf: fallbackBatch)
                 
                 if response.data.count < limit || (fbTotal != nil && (fbOffset + limit) >= fbTotal!) {
                     fbHasMore = false
                 } else {
                     fbOffset += limit
                 }
+            }
+            
+            if multiLangBatch.count > allChapters.count {
+                allChapters = multiLangBatch
             }
         }
         
