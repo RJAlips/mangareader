@@ -161,7 +161,7 @@ public final class HomeViewModel: ObservableObject {
             isLoading = false
         }
         
-        let libraryManga = LibraryRepository.shared.libraryItems
+        let libraryManga = !LibraryRepository.shared.libraryItems.isEmpty ? LibraryRepository.shared.libraryItems : db.mangaList.filter { $0.inLibrary }
         guard !libraryManga.isEmpty else {
             self.updateSummary = "0 successful, 0 skipped, 0 failed."
             self.showUpdateToast = true

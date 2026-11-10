@@ -163,9 +163,7 @@ public final class DemoMangaSource: MangaSource, @unchecked Sendable {
     }
     
     public func fetchChapters(for urlOrSlug: String) async throws -> [ChapterItem] {
-        guard let manga = sampleTitles.first(where: { $0.urlOrSlug == urlOrSlug }) else {
-            return []
-        }
+        let manga = sampleTitles.first(where: { $0.urlOrSlug == urlOrSlug }) ?? sampleTitles[0]
         
         var chapters: [ChapterItem] = []
         for chNum in (1...10).reversed() {

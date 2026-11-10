@@ -27,9 +27,9 @@ public final class LibraryRepository: ObservableObject {
     @Published public private(set) var libraryItems: [MangaItem] = []
     
     private init() {
+        self.libraryItems = db.mangaList.filter { $0.inLibrary }
         db.$mangaList
             .map { list in list.filter { $0.inLibrary } }
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] items in
                 self?.libraryItems = items
             }
@@ -44,7 +44,10 @@ public final class LibraryRepository: ObservableObject {
         unreadOnly: Bool = false,
         downloadedOnly: Bool = false
     ) -> [MangaItem] {
-        var items = libraryItems
+        var items = db.mangaList.filter { $0.inLibrary }
+        if self.libraryItems != items {
+            self.libraryItems = items
+        }
         
         // 1. Category Filter
         if let category = category, category != "All" {
