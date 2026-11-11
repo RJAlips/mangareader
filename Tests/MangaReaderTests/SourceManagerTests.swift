@@ -688,7 +688,7 @@ final class EndToEndFunctionalTests: XCTestCase {
         readerVM2.saveReadingProgressOnExit()
         
         XCTAssertEqual(historyRepo.historyItems.count, 1, "Reading chapter 11 of same manga must not create duplicate row")
-        XCTAssertEqual(historyRepo.historyItems.first?.displayChapterTitle, "Floor of Tests Part 2")
+        XCTAssertEqual(historyRepo.historyItems.first?.displayChapterTitle, chapter2.displayTitle)
         XCTAssertEqual(historyRepo.historyItems.first?.lastPageRead, 8)
     }
     
