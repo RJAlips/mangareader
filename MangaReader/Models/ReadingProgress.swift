@@ -8,9 +8,11 @@
 import Foundation
 
 public struct ReadingProgress: Codable, Hashable, Identifiable {
-    public var id: UUID { chapterID }
-    public var chapterID: UUID
+    public var id: UUID { mangaID }
     public var mangaID: UUID
+    public var chapterID: UUID
+    public var mangaId: UUID { mangaID }
+    public var chapterId: UUID { chapterID }
     public var pageIndex: Int
     public var totalPages: Int
     public var lastPageRead: Int {
@@ -22,6 +24,10 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
         set { totalPages = newValue }
     }
     public var readingTimeSeconds: TimeInterval
+    public var readingDurationSeconds: TimeInterval {
+        get { readingTimeSeconds }
+        set { readingTimeSeconds = newValue }
+    }
     public var updatedAt: Date
     
     // Stored metadata for independent history display & offline persistence

@@ -7,6 +7,21 @@
 
 import Foundation
 import Combine
+import WebKit
+
+public enum MangaReaderError: LocalizedError {
+    case scrapingFailed(String, String)
+    case cloudflareProtected(String)
+    
+    public var errorDescription: String? {
+        switch self {
+        case .scrapingFailed(let name, let reason):
+            return "[\(name)] Scraping failed: \(reason)"
+        case .cloudflareProtected(let name):
+            return "[\(name)] Site requires Cloudflare verification"
+        }
+    }
+}
 
 public struct RepositoryInfo: Identifiable, Codable, Hashable {
     public var id: String { url }
@@ -77,20 +92,20 @@ public final class SourceManager: ObservableObject {
             manifest: SourceManifest(
                 id: "com.mangareader.source.asurascans",
                 name: "Asura Scans",
-                version: "1.4.0",
-                versionCode: 140,
+                version: "1.4.1",
+                versionCode: 141,
                 lang: "EN",
-                baseURL: "https://asurascans.com",
-                iconURL: URL(string: "https://asurascans.com/favicon.ico"),
+                baseURL: "https://asuracomic.net",
+                iconURL: URL(string: "https://asuracomic.net/favicon.ico"),
                 isEnabled: true,
                 supportsLatest: true,
                 supportsSearch: true,
                 sourceDescription: "High quality action manhwa & webtoons translation group"
             ),
-            baseURLString: "https://asurascans.com",
-            popularURL: "https://asurascans.com/browse?order=popular",
-            latestURL: "https://asurascans.com/browse?order=update",
-            searchURL: "https://asurascans.com/browse?q={query}"
+            baseURLString: "https://asuracomic.net",
+            popularURL: "https://asuracomic.net/series?page=1",
+            latestURL: "https://asuracomic.net/series?page=1",
+            searchURL: "https://asuracomic.net/series?page=1&name={query}"
         )
         
         let asq = CommunityWebSource(
@@ -200,7 +215,7 @@ public final class SourceManager: ObservableObject {
         }) {
             let dynamicSource = CommunityWebSource(
                 manifest: manifest,
-                baseURLString: manifest.baseURL.isEmpty ? "https://api.mangadex.org" : manifest.baseURL
+                baseURLString: manifest.baseURL
             )
             register(source: dynamicSource)
             return dynamicSource
@@ -230,10 +245,10 @@ public final class SourceManager: ObservableObject {
             version: "1.0.0",
             versionCode: 1,
             lang: "EN",
-            baseURL: "https://api.mangadex.org",
+            baseURL: "",
             isEnabled: true
         )
-        let fallbackSource = CommunityWebSource(manifest: fallbackManifest, baseURLString: "https://api.mangadex.org")
+        let fallbackSource = CommunityWebSource(manifest: fallbackManifest, baseURLString: "")
         register(source: fallbackSource)
         return fallbackSource
     }
@@ -291,7 +306,7 @@ public final class SourceManager: ObservableObject {
                     } else {
                         register(source: CommunityWebSource(
                             manifest: manifest,
-                            baseURLString: manifest.baseURL.isEmpty ? (manifest.sourceDescription ?? "https://api.mangadex.org") : manifest.baseURL
+                            baseURLString: manifest.baseURL
                         ))
                     }
                 }
@@ -376,7 +391,7 @@ public final class SourceManager: ObservableObject {
             for manifest in parsed.manifests {
                 let communitySource = CommunityWebSource(
                     manifest: manifest,
-                    baseURLString: manifest.baseURL.isEmpty ? (manifest.sourceDescription ?? "https://api.mangadex.org") : manifest.baseURL
+                    baseURLString: manifest.baseURL
                 )
                 register(source: communitySource)
                 enabledSourceIDs.insert(manifest.id)
@@ -559,7 +574,7 @@ public final class SourceManager: ObservableObject {
         sources.removeAll(where: { $0.manifest.id == remoteManifest.id })
         let updatedSource = CommunityWebSource(
             manifest: remoteManifest,
-            baseURLString: remoteManifest.baseURL.isEmpty ? "https://api.mangadex.org" : remoteManifest.baseURL
+            baseURLString: remoteManifest.baseURL
         )
         register(source: updatedSource)
         
@@ -588,7 +603,7 @@ public final class SourceManager: ObservableObject {
         
         let newSource = CommunityWebSource(
             manifest: toInstall,
-            baseURLString: toInstall.baseURL.isEmpty ? "https://api.mangadex.org" : toInstall.baseURL
+            baseURLString: toInstall.baseURL
         )
         register(source: newSource)
         enabledSourceIDs.insert(toInstall.id)
@@ -939,7 +954,157 @@ public struct ExtensionHealthReport: Identifiable, Sendable {
     }
 }
 
-// MARK: - Community Web Source (3-Tier Resilient Architecture: HTML Scraper -> WP REST API -> MangaDex Catalog)
+// MARK: - Headless Web Scraper Engine (WKWebView Cookie & JS Rendering)
+
+@MainActor
+public final class WebScraperEngine: NSObject {
+    public static let shared = WebScraperEngine()
+    
+    private override init() {
+        super.init()
+    }
+    
+    public func fetchHTML(url: URL, referer: String? = nil, timeoutSeconds: TimeInterval = 8.0) async throws -> String {
+        // Fast URLSession GET attempt with realistic headers
+        var req = URLRequest(url: url)
+        req.timeoutInterval = min(timeoutSeconds, 8.0)
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        if let ref = referer, !ref.isEmpty {
+            req.setValue(ref, forHTTPHeaderField: "Referer")
+        }
+        
+        var requiresOffscreenRender = false
+        var fetchedHTML = ""
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            if let http = response as? HTTPURLResponse {
+                if [403, 503, 429].contains(http.statusCode) {
+                    requiresOffscreenRender = true
+                }
+            }
+            if let str = String(data: data, encoding: .utf8) {
+                fetchedHTML = str
+                let lower = str.lowercased()
+                if lower.contains("cf-browser-verification") ||
+                   lower.contains("just a moment...") ||
+                   lower.contains("turnstile") ||
+                   lower.contains("challenge-platform") {
+                    requiresOffscreenRender = true
+                }
+            }
+        } catch {
+            requiresOffscreenRender = true
+        }
+        
+        if !requiresOffscreenRender && !fetchedHTML.isEmpty {
+            return fetchedHTML
+        }
+        
+        // Offscreen WKWebView render fallback
+        let session = OffscreenWebSession()
+        return try await session.render(url: url, referer: referer, timeoutSeconds: 6.0)
+    }
+}
+
+private final class OffscreenWebSession: NSObject, WKNavigationDelegate, @unchecked Sendable {
+    private var webView: WKWebView?
+    private var continuation: CheckedContinuation<String, Error>?
+    private var timeoutTask: Task<Void, Never>?
+    
+    @MainActor
+    func render(url: URL, referer: String?, timeoutSeconds: TimeInterval) async throws -> String {
+        return try await withCheckedThrowingContinuation { cont in
+            self.continuation = cont
+            let config = WKWebViewConfiguration()
+            config.websiteDataStore = .default()
+            let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 375, height: 667), configuration: config)
+            self.webView = wv
+            wv.navigationDelegate = self
+            wv.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+            
+            var req = URLRequest(url: url)
+            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            if let ref = referer, !ref.isEmpty {
+                req.setValue(ref, forHTTPHeaderField: "Referer")
+            }
+            
+            self.timeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                await MainActor.run {
+                    self?.finish(error: NSError(domain: "WebScraperEngine", code: 408, userInfo: [NSLocalizedDescriptionKey: "Scraper timed out waiting for DOM"]))
+                }
+            }
+            
+            wv.load(req)
+        }
+    }
+    
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in
+            await self.waitForDOMAndExtract(webView: webView)
+        }
+    }
+    
+    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        Task { @MainActor in
+            self.finish(error: error)
+        }
+    }
+    
+    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        Task { @MainActor in
+            self.finish(error: error)
+        }
+    }
+    
+    @MainActor
+    private func waitForDOMAndExtract(webView: WKWebView) async {
+        for _ in 0..<4 {
+            let hasCards = await (try? webView.evaluateJavaScript(
+                "(document.querySelector('script#__NEXT_DATA__') !== null || document.querySelector('.series-card, .bsx, .page-item-detail, a[href*=\"/series/\"], a[href*=\"/manga/\"]') !== null)"
+            ) as? Bool) ?? false
+            
+            if hasCards {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+        
+        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            for cookie in cookies {
+                HTTPCookieStorage.shared.setCookie(cookie)
+            }
+        }
+        
+        if let html = try? await webView.evaluateJavaScript("document.documentElement.outerHTML") as? String, !html.isEmpty {
+            self.finish(html: html)
+        } else {
+            self.finish(error: NSError(domain: "WebScraperEngine", code: 500, userInfo: [NSLocalizedDescriptionKey: "Failed to extract outerHTML"]))
+        }
+    }
+    
+    @MainActor
+    private func finish(html: String? = nil, error: Error? = nil) {
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        let cont = continuation
+        continuation = nil
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView = nil
+        
+        if let h = html {
+            cont?.resume(returning: h)
+        } else if let err = error {
+            cont?.resume(throwing: err)
+        }
+    }
+}
+
+// MARK: - Community Web Source (4 Major Engines: Madara -> MangaThemesia -> Next.js/HeanCMS -> WP REST API)
 
 public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     public let manifest: SourceManifest
@@ -950,7 +1115,6 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     public let chaptersURL: String?
     
     private let client = NetworkClient.shared
-    private let mangadex = MangaDexSource()
     private let requestTimeout: TimeInterval = 10.0
     
     public init(
@@ -969,17 +1133,20 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         self.chaptersURL = chaptersURL
     }
     
-    // MARK: - Popular Titles (3-Tier Pipeline)
+    // MARK: - Popular Titles
     public func fetchPopular(page: Int) async throws -> [MangaItem] {
-        // Tier 1: HTML Scrape with timeout
         var candidateURLs: [URL] = []
         if page == 1 {
             candidateURLs = [
                 popularURL,
+                "\(baseURLString)/series?order=popular",
+                "\(baseURLString)/series",
                 "\(baseURLString)/manga/page/1/?m_orderby=views",
+                "\(baseURLString)/manga/?m_orderby=views",
                 "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=views",
                 "\(baseURLString)/manga/?order=popular",
                 "\(baseURLString)/series/?order=popular",
+                "\(baseURLString)/comics",
                 "\(baseURLString)/manga/"
             ].compactMap { $0 }.compactMap { URL(string: $0) }
         } else {
@@ -996,6 +1163,8 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
             candidateURLs = [
                 pagedPopular,
+                "\(baseURLString)/series?page=\(page)&order=popular",
+                "\(baseURLString)/series?page=\(page)",
                 "\(baseURLString)/manga/page/\(page)/?m_orderby=views",
                 "\(baseURLString)/page/\(page)/?s=&post_type=wp-manga&m_orderby=views",
                 "\(baseURLString)/manga/?page=\(page)&order=popular",
@@ -1020,18 +1189,19 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             return wpItems
         }
         
-        // Tier 3: MangaDex Catalog fallback
-        return await fetchTier3CatalogFallback(mode: "popular", page: page)
+        return []
     }
     
-    // MARK: - Latest Titles (3-Tier Pipeline)
+    // MARK: - Latest Titles
     public func fetchLatest(page: Int) async throws -> [MangaItem] {
-        // Tier 1: HTML Scrape with timeout
         var candidateURLs: [URL] = []
         if page == 1 {
             candidateURLs = [
                 latestURL,
+                "\(baseURLString)/series?order=update",
+                "\(baseURLString)/series",
                 "\(baseURLString)/manga/page/1/?m_orderby=latest",
+                "\(baseURLString)/manga/?m_orderby=latest",
                 "\(baseURLString)/?s=&post_type=wp-manga&m_orderby=latest",
                 "\(baseURLString)/manga/?order=update",
                 "\(baseURLString)/series/?order=update",
@@ -1052,6 +1222,8 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
             candidateURLs = [
                 pagedLatest,
+                "\(baseURLString)/series?page=\(page)&order=update",
+                "\(baseURLString)/series?page=\(page)",
                 "\(baseURLString)/manga/page/\(page)/?m_orderby=latest",
                 "\(baseURLString)/page/\(page)/?s=&post_type=wp-manga&m_orderby=latest",
                 "\(baseURLString)/manga/?page=\(page)&order=update",
@@ -1077,11 +1249,10 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             return wpItems
         }
         
-        // Tier 3: MangaDex Catalog fallback
-        return await fetchTier3CatalogFallback(mode: "latest", page: page)
+        return []
     }
     
-    // MARK: - Search (3-Tier Pipeline)
+    // MARK: - Search
     public func search(query: String, page: Int) async throws -> [MangaItem] {
         let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanQuery.isEmpty else {
@@ -1090,7 +1261,6 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         
         let encoded = cleanQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanQuery
         
-        // Tier 1: HTML Search
         var candidateSearchURLs: [URL] = []
         var customSearch = searchURL?.replacingOccurrences(of: "{query}", with: encoded)
         if let cs = customSearch {
@@ -1104,12 +1274,16 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         if page == 1 {
             candidateSearchURLs = [
                 customSearch,
+                "\(baseURLString)/series?page=1&name=\(encoded)",
+                "\(baseURLString)/browse?q=\(encoded)",
                 "\(baseURLString)/?s=\(encoded)&post_type=wp-manga",
                 "\(baseURLString)/?s=\(encoded)"
             ].compactMap { $0 }.compactMap { URL(string: $0) }
         } else {
             candidateSearchURLs = [
                 customSearch,
+                "\(baseURLString)/series?page=\(page)&name=\(encoded)",
+                "\(baseURLString)/browse?page=\(page)&q=\(encoded)",
                 "\(baseURLString)/page/\(page)/?s=\(encoded)&post_type=wp-manga",
                 "\(baseURLString)/page/\(page)/?s=\(encoded)",
                 "\(baseURLString)/?s=\(encoded)&page=\(page)"
@@ -1131,65 +1305,67 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             return wpResults
         }
         
-        // Tier 3: MangaDex Catalog search
-        return await fetchTier3CatalogFallback(mode: "search", page: page, query: cleanQuery)
-    }
-    
-    private func fetchTier3CatalogFallback(mode: String, page: Int, query: String? = nil) async -> [MangaItem] {
-        let lowerName = manifest.name.lowercased()
-        let lowerId = manifest.id.lowercased()
-        let isManhwa = lowerName.contains("manhwa") || lowerName.contains("asura") || lowerName.contains("flame") || lowerName.contains("reaper") || lowerId.contains("manhwa") || lowerId.contains("asura")
-        let languages = isManhwa ? ["ko", "zh", "en"] : []
-        
-        do {
-            let items: [MangaItem]
-            if let q = query, !q.isEmpty {
-                items = try await mangadex.fetchCatalog(page: page, limit: 40, sort: "relevance", titleQuery: q, originalLanguages: languages)
-            } else if mode == "latest" {
-                items = try await mangadex.fetchCatalog(page: page, limit: 40, sort: "latestUploadedChapter", originalLanguages: languages)
-            } else {
-                items = try await mangadex.fetchCatalog(page: page, limit: 40, sort: "followedCount", originalLanguages: languages)
-            }
-            return items.map { item in
-                var mapped = item
-                mapped.sourceID = self.manifest.id
-                return mapped
-            }
-        } catch {
-            let fallback: [MangaItem]
-            if let q = query, !q.isEmpty {
-                fallback = (try? await mangadex.search(query: q, page: page)) ?? []
-            } else if mode == "latest" {
-                fallback = (try? await mangadex.fetchLatest(page: page)) ?? []
-            } else {
-                fallback = (try? await mangadex.fetchPopular(page: page)) ?? []
-            }
-            return fallback.map { item in
-                var mapped = item
-                mapped.sourceID = self.manifest.id
-                return mapped
-            }
-        }
+        return []
     }
     
     // MARK: - Manga Detail
     public func fetchMangaDetail(urlOrSlug: String) async throws -> MangaItem {
-        if !urlOrSlug.contains("/") && urlOrSlug.count >= 32 {
-            let item = try await mangadex.fetchMangaDetail(urlOrSlug: urlOrSlug)
-            var mapped = item
-            mapped.sourceID = self.manifest.id
-            return mapped
+        let candidateURLs: [URL]
+        if urlOrSlug.hasPrefix("http"), let u = URL(string: urlOrSlug) {
+            candidateURLs = [u]
+        } else {
+            let clean = urlOrSlug.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            candidateURLs = [
+                URL(string: "\(baseURLString)/\(clean)"),
+                URL(string: "\(baseURLString)/series/\(clean)"),
+                URL(string: "\(baseURLString)/manga/\(clean)"),
+                URL(string: "\(baseURLString)/comics/\(clean)")
+            ].compactMap { $0 }
         }
         
-        if let url = URL(string: urlOrSlug.hasPrefix("http") ? urlOrSlug : "\(baseURLString)/\(urlOrSlug)") {
+        for url in candidateURLs {
+            var html: String? = nil
             if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
-               let html = String(data: htmlData, encoding: .utf8) {
-                let title = extractRegex(pattern: #"<h1[^>]*>([^<]+)</h1>"#, in: html) ?? url.lastPathComponent.capitalized
-                let desc = extractRegex(pattern: #"<div class="[^"]*(?:summary__content|description-summary|entry-content)[^"]*">([\s\S]*?)</div>"#, in: html)
+               let str = String(data: htmlData, encoding: .utf8),
+               !str.lowercased().contains("cf-browser-verification") && !str.lowercased().contains("just a moment...") {
+                html = str
+            }
+            if html == nil {
+                html = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: baseURLString, timeoutSeconds: 6.0)
+            }
+            
+            if let html = html, !html.isEmpty {
+                // 1. Check Next.js __NEXT_DATA__
+                if let nextDataJSON = extractRegex(pattern: #"<script id="__NEXT_DATA__" type="application/json">([\s\S]*?)</script>"#, in: html),
+                   let jsonData = nextDataJSON.data(using: .utf8),
+                   let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let props = root["props"] as? [String: Any],
+                   let pageProps = props["pageProps"] as? [String: Any] {
+                    let series = (pageProps["series"] as? [String: Any]) ?? (pageProps["data"] as? [String: Any]) ?? pageProps
+                    let title = (series["title"] as? String) ?? (series["name"] as? String) ?? formatTitleFromSlug(urlOrSlug)
+                    let desc = (series["description"] as? String) ?? (series["summary"] as? String)
+                    var coverURL: URL? = nil
+                    if let thumb = (series["thumbnail"] as? String) ?? (series["cover"] as? String) ?? (series["image"] as? String) {
+                        coverURL = Self.sanitizeImageURL(thumb, baseURL: URL(string: baseURLString))
+                    }
+                    return MangaItem(
+                        sourceID: manifest.id,
+                        urlOrSlug: urlOrSlug,
+                        title: Self.unescapeHTML(title),
+                        author: (series["author"] as? String) ?? "Community",
+                        description: desc,
+                        coverURL: coverURL,
+                        genres: ["Manhwa", "Manga"],
+                        status: .ongoing
+                    )
+                }
                 
-                // Extract cover using priority attributes
+                // 2. HTML parsing
+                let title = extractRegex(pattern: #"<h1[^>]*>([^<]+)</h1>"#, in: html) ?? formatTitleFromSlug(urlOrSlug)
+                let desc = extractRegex(pattern: #"<div class="[^"]*(?:summary__content|description-summary|entry-content|synopsis)[^"]*">([\s\S]*?)</div>"#, in: html)
+                
                 var coverURL: URL? = nil
-                if let imgTag = extractRegex(pattern: #"<div class="[^"]*(?:summary_image|thumb|thumb-manga)[^"]*">([\s\S]*?)</div>"#, in: html) {
+                if let imgTag = extractRegex(pattern: #"<div class="[^"]*(?:summary_image|thumb|thumb-manga|poster)[^"]*">([\s\S]*?)</div>"#, in: html) {
                     coverURL = Self.extractImageURL(from: imgTag, relativeTo: URL(string: baseURLString))
                 }
                 if coverURL == nil {
@@ -1209,22 +1385,11 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
         }
         
-        let searchResults = try? await mangadex.search(query: urlOrSlug, page: 1)
-        if let match = searchResults?.first {
-            var mapped = match
-            mapped.sourceID = self.manifest.id
-            return mapped
-        }
-        
-        throw NetworkError.badServerResponse(statusCode: 404)
+        throw MangaReaderError.scrapingFailed(manifest.name, "Manga detail could not be retrieved from \(baseURLString)")
     }
     
     // MARK: - Chapters
     public func fetchChapters(for urlOrSlug: String) async throws -> [ChapterItem] {
-        if !urlOrSlug.contains("/") && urlOrSlug.count >= 32 {
-            return try await mangadex.fetchChapters(for: urlOrSlug)
-        }
-        
         var candidateURLs: [URL] = []
         if urlOrSlug.hasPrefix("http"), let u = URL(string: urlOrSlug) {
             candidateURLs.append(u)
@@ -1232,82 +1397,96 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             let clean = urlOrSlug.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             if let u = URL(string: "\(baseURLString)/\(clean)") { candidateURLs.append(u) }
             if !clean.hasPrefix("manga/") && !clean.hasPrefix("comics/") && !clean.hasPrefix("series/") {
+                if let u = URL(string: "\(baseURLString)/series/\(clean)") { candidateURLs.append(u) }
                 if let u = URL(string: "\(baseURLString)/manga/\(clean)") { candidateURLs.append(u) }
                 if let u = URL(string: "\(baseURLString)/comics/\(clean)") { candidateURLs.append(u) }
-                if let u = URL(string: "\(baseURLString)/series/\(clean)") { candidateURLs.append(u) }
             }
         }
         
         var bestHTMLChapters: [ChapterItem] = []
         
         for url in candidateURLs {
+            var html: String? = nil
             if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
-               let html = String(data: htmlData, encoding: .utf8) {
-                var chapters = parseChaptersFromHTML(html, detailURL: url)
-                
-                // 1. If 0 or 1 chapter, try WP-Manga {detailURL}/ajax/chapters/ endpoint via POST
-                if chapters.count <= 1, let ajaxURL = URL(string: "\(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/ajax/chapters/") {
-                    var req = URLRequest(url: ajaxURL)
-                    req.httpMethod = "POST"
-                    req.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-                    req.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
-                    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-                    req.timeoutInterval = requestTimeout
-                    
-                    if let (ajaxData, resp) = try? await URLSession.shared.data(for: req),
-                       let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                       let ajaxHTML = String(data: ajaxData, encoding: .utf8) {
-                        let parsedAjax = parseChaptersFromHTML(ajaxHTML, detailURL: url)
-                        if parsedAjax.count > chapters.count {
-                            chapters = parsedAjax
-                        }
-                    }
-                }
-                
-                // 2. If <= 1 chapter and post ID is present, try WP AJAX manga_get_chapters
-                if chapters.count <= 1, let postID = extractRegex(pattern: #"(?:manga_id|data-id|post_id|postid-)\s*=?\s*['"]?(\d+)"#, in: html) {
-                    if let ajaxChapters = await fetchChaptersFromWPAJAX(mangaID: postID), ajaxChapters.count > chapters.count {
-                        chapters = ajaxChapters
-                    }
-                }
-                
-                if chapters.count > bestHTMLChapters.count {
-                    bestHTMLChapters = chapters
-                }
-                
-                if bestHTMLChapters.count > 1 {
-                    return bestHTMLChapters
-                }
+               let str = String(data: htmlData, encoding: .utf8),
+               !str.lowercased().contains("cf-browser-verification") && !str.lowercased().contains("just a moment...") {
+                html = str
             }
-        }
-        
-        if bestHTMLChapters.count > 1 {
-            return bestHTMLChapters
-        }
-        
-        // Tier 3: MangaDex fallback matching title
-        let cleanTitle = formatTitleFromSlug(urlOrSlug)
-        let mdQueries = [cleanTitle, urlOrSlug]
-        var bestMDChapters: [ChapterItem] = []
-        
-        for q in mdQueries {
-            if let matches = try? await mangadex.search(query: q, page: 1), !matches.isEmpty {
-                for match in matches.prefix(3) {
-                    if let mdChapters = try? await mangadex.fetchChapters(for: match.urlOrSlug), mdChapters.count > bestMDChapters.count {
-                        bestMDChapters = mdChapters
+            if html == nil {
+                html = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: baseURLString, timeoutSeconds: 6.0)
+            }
+            
+            guard let html = html, !html.isEmpty else { continue }
+            
+            // Check Next.js __NEXT_DATA__
+            if let nextDataJSON = extractRegex(pattern: #"<script id="__NEXT_DATA__" type="application/json">([\s\S]*?)</script>"#, in: html),
+               let jsonData = nextDataJSON.data(using: .utf8),
+               let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let props = root["props"] as? [String: Any],
+               let pageProps = props["pageProps"] as? [String: Any] {
+                let series = (pageProps["series"] as? [String: Any]) ?? (pageProps["data"] as? [String: Any]) ?? pageProps
+                var rawChaps: [[String: Any]] = []
+                if let arr = series["chapters"] as? [[String: Any]] { rawChaps = arr }
+                else if let arr = pageProps["chapters"] as? [[String: Any]] { rawChaps = arr }
+                
+                if !rawChaps.isEmpty {
+                    var parsed: [ChapterItem] = []
+                    for (idx, ch) in rawChaps.enumerated() {
+                        let chNum = (ch["number"] as? Double) ?? (ch["chapter_number"] as? Double) ?? Double(rawChaps.count - idx)
+                        let title = (ch["title"] as? String) ?? (ch["name"] as? String) ?? "Chapter \(chNum)"
+                        let slug = (ch["slug"] as? String) ?? (ch["id"] as? String) ?? "\(chNum)"
+                        let fullSlug = slug.hasPrefix("http") ? slug : "\(baseURLString)/series/\(urlOrSlug)/\(slug)"
+                        parsed.append(ChapterItem(
+                            id: UUID(),
+                            mangaID: UUID(),
+                            sourceChapterID: fullSlug,
+                            chapterNumber: chNum,
+                            title: title,
+                            scanlator: manifest.name,
+                            pageCount: 1,
+                            pageURLs: []
+                        ))
+                    }
+                    if !parsed.isEmpty {
+                        return parsed
                     }
                 }
             }
-            if bestMDChapters.count > 1 {
-                break
+            
+            var chapters = parseChaptersFromHTML(html, detailURL: url)
+            
+            // 1. If 0 or 1 chapter, try WP-Manga {detailURL}/ajax/chapters/ endpoint via POST
+            if chapters.count <= 1, let ajaxURL = URL(string: "\(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/ajax/chapters/") {
+                var req = URLRequest(url: ajaxURL)
+                req.httpMethod = "POST"
+                req.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+                req.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
+                req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+                req.timeoutInterval = requestTimeout
+                
+                if let (ajaxData, resp) = try? await URLSession.shared.data(for: req),
+                   let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                   let ajaxHTML = String(data: ajaxData, encoding: .utf8) {
+                    let parsedAjax = parseChaptersFromHTML(ajaxHTML, detailURL: url)
+                    if parsedAjax.count > chapters.count {
+                        chapters = parsedAjax
+                    }
+                }
             }
-        }
-        
-        if bestMDChapters.count > bestHTMLChapters.count {
-            return bestMDChapters.map { ch in
-                var mapped = ch
-                mapped.scanlator = self.manifest.name
-                return mapped
+            
+            // 2. If <= 1 chapter and post ID is present, try WP AJAX manga_get_chapters
+            if chapters.count <= 1, let postID = extractRegex(pattern: #"(?:manga_id|data-id|post_id|postid-)\s*=?\s*['"]?(\d+)"#, in: html) {
+                if let ajaxChapters = await fetchChaptersFromWPAJAX(mangaID: postID), ajaxChapters.count > chapters.count {
+                    chapters = ajaxChapters
+                }
+            }
+            
+            if chapters.count > bestHTMLChapters.count {
+                bestHTMLChapters = chapters
+            }
+            
+            if bestHTMLChapters.count > 1 {
+                return bestHTMLChapters
             }
         }
         
@@ -1331,18 +1510,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     
     // MARK: - Page URLs
     public func fetchPageURLs(for chapterSourceID: String) async throws -> [URL] {
-        var cleanId = chapterSourceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if cleanId.lowercased().hasPrefix("mangadex_") {
-            let mdId = String(cleanId.dropFirst(9))
-            if let mdPages = try? await mangadex.fetchPageURLs(for: mdId), !mdPages.isEmpty {
-                return mdPages
-            }
-        } else if !cleanId.hasPrefix("http") && UUID(uuidString: cleanId) != nil {
-            if let mdPages = try? await mangadex.fetchPageURLs(for: cleanId), !mdPages.isEmpty {
-                return mdPages
-            }
-        }
-        
+        let cleanId = chapterSourceID.trimmingCharacters(in: .whitespacesAndNewlines)
         let chapterURL: URL?
         if cleanId.hasPrefix("http") {
             chapterURL = URL(string: cleanId)
@@ -1352,87 +1520,74 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         
         guard let url = chapterURL else { return [] }
         
-        var htmlData = try? await client.fetchData(from: url, headers: [
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": baseURLString,
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
-        ], timeoutInterval: requestTimeout)
-        
-        if htmlData == nil {
-            htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout)
+        var html: String? = nil
+        if let htmlData = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout),
+           let str = String(data: htmlData, encoding: .utf8),
+           !str.lowercased().contains("cf-browser-verification") && !str.lowercased().contains("just a moment...") {
+            html = str
+        }
+        if html == nil {
+            html = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: baseURLString, timeoutSeconds: 6.0)
         }
         
-        if let htmlData = htmlData, let html = String(data: htmlData, encoding: .utf8) {
-            let base = URL(string: baseURLString)
-            var pageURLs: [URL] = []
-            var seen = Set<String>()
-            
-            // 1. Match all <img> tags in HTML
-            let imgRegexPattern = #"<img[^>]+>"#
-            if let regex = try? NSRegularExpression(pattern: imgRegexPattern, options: .caseInsensitive) {
+        guard let html = html, !html.isEmpty else { return [] }
+        
+        let base = URL(string: baseURLString)
+        var pageURLs: [URL] = []
+        var seen = Set<String>()
+        
+        // 1. Match all <img> tags in HTML
+        let imgRegexPattern = #"<img[^>]+>"#
+        if let regex = try? NSRegularExpression(pattern: imgRegexPattern, options: .caseInsensitive) {
+            let ns = html as NSString
+            let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+            for m in matches {
+                let tag = ns.substring(with: m.range)
+                let lower = tag.lowercased()
+                if lower.contains("avatar") || lower.contains("logo") || lower.contains("banner") || lower.contains("favicon") || lower.contains("icon") {
+                    continue
+                }
+                if let extracted = Self.extractImageURL(from: tag, relativeTo: base) {
+                    let str = extracted.absoluteString
+                    if !seen.contains(str) && !str.lowercased().contains("logo") && !str.lowercased().contains("banner") {
+                        seen.insert(str)
+                        pageURLs.append(extracted)
+                    }
+                }
+            }
+        }
+        
+        // 2. Scan for Astro/JSON embedded image links if <img> yielded 0
+        if pageURLs.isEmpty {
+            let rawPattern = #"https?://[^\s"\'<>]+\.(?:jpg|jpeg|png|webp)"#
+            if let regex = try? NSRegularExpression(pattern: rawPattern, options: .caseInsensitive) {
                 let ns = html as NSString
                 let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
                 for m in matches {
-                    let tag = ns.substring(with: m.range)
-                    let lower = tag.lowercased()
-                    if lower.contains("avatar") || lower.contains("logo") || lower.contains("banner") || lower.contains("favicon") || lower.contains("icon") {
+                    let raw = ns.substring(with: m.range)
+                    let lower = raw.lowercased()
+                    if lower.contains("logo") || lower.contains("avatar") || lower.contains("banner") || lower.contains("favicon") {
                         continue
                     }
-                    if let extracted = Self.extractImageURL(from: tag, relativeTo: base) {
-                        let str = extracted.absoluteString
-                        if !seen.contains(str) && !str.lowercased().contains("logo") && !str.lowercased().contains("banner") {
-                            seen.insert(str)
-                            pageURLs.append(extracted)
-                        }
+                    if let u = URL(string: raw), !seen.contains(raw) {
+                        seen.insert(raw)
+                        pageURLs.append(u)
                     }
                 }
             }
-            
-            // 2. Scan for Astro/JSON embedded image links if <img> yielded 0
-            if pageURLs.isEmpty {
-                let rawPattern = #"https?://[^\s"\'<>]+\.(?:jpg|jpeg|png|webp)"#
-                if let regex = try? NSRegularExpression(pattern: rawPattern, options: .caseInsensitive) {
-                    let ns = html as NSString
-                    let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
-                    for m in matches {
-                        let raw = ns.substring(with: m.range)
-                        let lower = raw.lowercased()
-                        if lower.contains("logo") || lower.contains("avatar") || lower.contains("banner") || lower.contains("favicon") {
-                            continue
-                        }
-                        if let u = URL(string: raw), !seen.contains(raw) {
-                            seen.insert(raw)
-                            pageURLs.append(u)
-                        }
-                    }
-                }
-            }
-            
-            // Ensure all page URLs have absolute scheme and host
-            let resolvedPages = pageURLs.compactMap { u -> URL? in
-                if u.scheme != nil && u.host != nil {
-                    return u
-                }
-                if let base = URL(string: baseURLString), let resolved = URL(string: u.absoluteString, relativeTo: base) {
-                    return resolved.absoluteURL
-                }
-                return nil
-            }
-            
-            if !resolvedPages.isEmpty {
-                return resolvedPages
-            }
         }
         
-        if let fallback = try? await mangadex.fetchPageURLs(for: cleanId), !fallback.isEmpty {
-            return fallback
+        let resolvedPages = pageURLs.compactMap { u -> URL? in
+            if u.scheme != nil && u.host != nil {
+                return u
+            }
+            if let base = URL(string: baseURLString), let resolved = URL(string: u.absoluteString, relativeTo: base) {
+                return resolved.absoluteURL
+            }
+            return nil
         }
         
-        if let fallbackURL = URL(string: "\(baseURLString)/favicon.ico") ?? URL(string: "https://api.mangadex.org/favicon.ico") {
-            return [fallbackURL]
-        }
-        
-        return []
+        return resolvedPages
     }
     
     public func checkHealth() async -> Bool {
@@ -1509,16 +1664,93 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     }
     
     private func scrapeTitles(from url: URL) async throws -> [MangaItem] {
-        let data = try await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: requestTimeout)
-        guard let html = String(data: data, encoding: .utf8) else { return [] }
+        var html: String? = nil
+        var didUseWebScraper = false
         
+        // Fast URLSession GET attempt with CDN headers
+        if let data = try? await client.fetchDataWithCDNHeaders(from: url, refererOverride: baseURLString, timeoutInterval: min(requestTimeout, 8.0)),
+           let rawStr = String(data: data, encoding: .utf8) {
+            let lower = rawStr.lowercased()
+            let isChallenge = lower.contains("cf-browser-verification") ||
+                              lower.contains("just a moment...") ||
+                              lower.contains("turnstile") ||
+                              lower.contains("challenge-platform")
+            if !isChallenge {
+                html = rawStr
+            }
+        }
+        
+        // If HTML is nil, empty, or blocked by Cloudflare, dispatch to WebScraperEngine
+        if html == nil || html?.isEmpty == true {
+            didUseWebScraper = true
+            html = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: baseURLString, timeoutSeconds: 6.0)
+        }
+        
+        guard let validHTML = html, !validHTML.isEmpty else { return [] }
+        var parsed = parseMangaItemsFromHTML(validHTML, pageURL: url)
+        
+        // If returned HTML had 0 items for a JS-rendered site, dispatch to offscreen WKWebView
+        if parsed.isEmpty && !didUseWebScraper {
+            if let renderedHTML = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: baseURLString, timeoutSeconds: 6.0),
+               !renderedHTML.isEmpty {
+                parsed = parseMangaItemsFromHTML(renderedHTML, pageURL: url)
+            }
+        }
+        
+        return parsed
+    }
+    
+    private func parseMangaItemsFromHTML(_ html: String, pageURL: URL) -> [MangaItem] {
         var results: [MangaItem] = []
         var seenSlugs = Set<String>()
         let base = URL(string: baseURLString)
         let ns = html as NSString
         
-        // Strategy A: Card containers (Astro, Madara, WP-Manga, Flame, Asura, etc.)
-        let cardContainerPattern = #"<(?:div|article)[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|unit|col-6|col-md-2|article)[^"]*"[^>]*>[\s\S]*?</(?:div|article)>\s*(?:</div>)?"#
+        // 1. Engine C: Next.js __NEXT_DATA__ JSON script tag
+        if let nextDataJSON = extractRegex(pattern: #"<script id="__NEXT_DATA__" type="application/json">([\s\S]*?)</script>"#, in: html),
+           let jsonData = nextDataJSON.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+           let props = root["props"] as? [String: Any],
+           let pageProps = props["pageProps"] as? [String: Any] {
+            
+            var seriesList: [[String: Any]] = []
+            if let arr = pageProps["series"] as? [[String: Any]] { seriesList = arr }
+            else if let arr = pageProps["data"] as? [[String: Any]] { seriesList = arr }
+            else if let arr = pageProps["mangas"] as? [[String: Any]] { seriesList = arr }
+            else if let arr = pageProps["comics"] as? [[String: Any]] { seriesList = arr }
+            else if let arr = pageProps["posts"] as? [[String: Any]] { seriesList = arr }
+            else if let nested = pageProps["data"] as? [String: Any], let arr = nested["data"] as? [[String: Any]] { seriesList = arr }
+            else if let nested = pageProps["series"] as? [String: Any], let arr = nested["data"] as? [[String: Any]] { seriesList = arr }
+            
+            for item in seriesList {
+                let title = (item["title"] as? String) ?? (item["name"] as? String) ?? (item["post_title"] as? String) ?? "Untitled"
+                let rawSlug = (item["slug"] as? String) ?? (item["id"] as? String) ?? (item["series_slug"] as? String) ?? ""
+                guard !rawSlug.isEmpty else { continue }
+                let slug = sanitizeSlug(from: rawSlug)
+                guard !seenSlugs.contains(slug) else { continue }
+                seenSlugs.insert(slug)
+                
+                var coverURL: URL? = nil
+                if let thumb = (item["thumbnail"] as? String) ?? (item["cover"] as? String) ?? (item["image"] as? String) ?? (item["poster"] as? String) {
+                    coverURL = Self.sanitizeImageURL(thumb, baseURL: base)
+                }
+                
+                results.append(MangaItem(
+                    sourceID: manifest.id,
+                    urlOrSlug: slug,
+                    title: Self.unescapeHTML(title),
+                    coverURL: coverURL,
+                    genres: ["Manhwa", "Manga"],
+                    status: .ongoing
+                ))
+            }
+            if !results.isEmpty {
+                return results
+            }
+        }
+        
+        // 2. Engine A & B: Card containers (Madara, MangaThemesia, Next.js HTML cards)
+        let cardContainerPattern = #"<(?:div|article)[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|unit|col-6|col-md-2|article|grid-item|animposx)[^"]*"[^>]*>[\s\S]*?</(?:div|article)>\s*(?:</div>)?"#
         if let cardRegex = try? NSRegularExpression(pattern: cardContainerPattern, options: .caseInsensitive) {
             let matches = cardRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
             for m in matches {
@@ -1568,7 +1800,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             return results
         }
         
-        // Strategy B: Anchor tags linking to manga / comics / series / titles
+        // 3. Anchor tags linking to /series/, /comics/, /manga/
         let linkPattern = #"<a[^>]+href="([^"]*(?:/manga/|/comics/|/series/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
         if let linkRegex = try? NSRegularExpression(pattern: linkPattern, options: .caseInsensitive) {
             let matches = linkRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import WebKit
 
 public struct SourceDetailView: View {
     public let source: any MangaSource
@@ -16,6 +17,8 @@ public struct SourceDetailView: View {
     @State private var isLoadingMore: Bool = false
     @State private var currentPage: Int = 1
     @State private var hasMorePages: Bool = true
+    @State private var showCloudflareBanner: Bool = false
+    @State private var showCloudflareSheet: Bool = false
     @State private var currentFetchTask: Task<Void, Never>? = nil
     @State private var searchDebounceTask: Task<Void, Never>? = nil
     
@@ -74,6 +77,39 @@ public struct SourceDetailView: View {
                     hasMorePages = true
                     loadData()
                 }
+            }
+            
+            // Cloudflare Verification Warning Banner
+            if showCloudflareBanner {
+                HStack(spacing: 10) {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .foregroundColor(.mangaAmber)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Site requires Cloudflare verification")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text("Complete verification once in Web View to load titles.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.textSecondary)
+                    }
+                    Spacer()
+                    Button {
+                        showCloudflareSheet = true
+                    } label: {
+                        Text("Open Web View")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.mangaAccent)
+                            .cornerRadius(6)
+                    }
+                }
+                .padding(12)
+                .background(Color.surfacePrimary)
+                .cornerRadius(8)
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.vertical, Theme.Spacing.xs)
             }
             
             // Content
@@ -200,6 +236,14 @@ public struct SourceDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showCloudflareSheet) {
+            if let webURL = sourceWebURL {
+                CloudflareWebViewSheet(url: webURL) {
+                    showCloudflareBanner = false
+                    loadData()
+                }
+            }
+        }
         .task {
             if items.isEmpty {
                 loadData()
@@ -234,15 +278,30 @@ public struct SourceDetailView: View {
             isLoading = true
             currentPage = 1
             hasMorePages = true
+            showCloudflareBanner = false
             defer { isLoading = false }
             
             do {
-                let result: [MangaItem]
-                if selectedTab == 0 {
-                    result = try await source.fetchPopular(page: 1)
-                } else {
-                    result = try await source.fetchLatest(page: 1)
+                let result: [MangaItem] = try await withThrowingTaskGroup(of: [MangaItem].self) { group in
+                    group.addTask {
+                        if selectedTab == 0 {
+                            return try await source.fetchPopular(page: 1)
+                        } else {
+                            return try await source.fetchLatest(page: 1)
+                        }
+                    }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 12_000_000_000)
+                        throw MangaReaderError.cloudflareProtected(source.manifest.name)
+                    }
+                    
+                    if let first = try await group.next() {
+                        group.cancelAll()
+                        return first
+                    }
+                    return []
                 }
+                
                 if !Task.isCancelled {
                     self.items = result
                     if result.count < 10 {
@@ -250,7 +309,10 @@ public struct SourceDetailView: View {
                     }
                 }
             } catch {
-                // Keep existing items if reload fails
+                let errStr = "\(error)".lowercased()
+                if errStr.contains("cloudflare") || errStr.contains("408") || errStr.contains("timeout") || errStr.contains("403") {
+                    showCloudflareBanner = true
+                }
             }
         }
     }
@@ -269,11 +331,27 @@ public struct SourceDetailView: View {
                 isLoading = true
                 currentPage = 1
                 hasMorePages = true
+                showCloudflareBanner = false
             }
             defer { isLoading = false }
             
             do {
-                let results = try await source.search(query: trimmed, page: 1)
+                let results: [MangaItem] = try await withThrowingTaskGroup(of: [MangaItem].self) { group in
+                    group.addTask {
+                        return try await source.search(query: trimmed, page: 1)
+                    }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 12_000_000_000)
+                        throw MangaReaderError.cloudflareProtected(source.manifest.name)
+                    }
+                    
+                    if let first = try await group.next() {
+                        group.cancelAll()
+                        return first
+                    }
+                    return []
+                }
+                
                 if !Task.isCancelled {
                     self.items = results
                     if results.count < 10 {
@@ -281,7 +359,10 @@ public struct SourceDetailView: View {
                     }
                 }
             } catch {
-                // Keep existing or empty
+                let errStr = "\(error)".lowercased()
+                if errStr.contains("cloudflare") || errStr.contains("408") || errStr.contains("timeout") || errStr.contains("403") {
+                    showCloudflareBanner = true
+                }
             }
         }
     }
@@ -326,6 +407,74 @@ public struct SourceDetailView: View {
                 }
             } catch {
                 self.hasMorePages = false
+            }
+        }
+    }
+}
+
+// MARK: - Cloudflare Web View Sheet
+
+public struct CloudflareWebViewSheet: View {
+    public let url: URL
+    public let onDismiss: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    public init(url: URL, onDismiss: @escaping () -> Void) {
+        self.url = url
+        self.onDismiss = onDismiss
+    }
+    
+    public var body: some View {
+        NavigationStack {
+            CloudflareWKView(url: url)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle("Cloudflare Verification")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") {
+                            dismiss()
+                            onDismiss()
+                        }
+                        .fontWeight(.semibold)
+                        .foregroundColor(.mangaAccent)
+                    }
+                }
+        }
+    }
+}
+
+public struct CloudflareWKView: UIViewRepresentable {
+    public let url: URL
+    
+    public init(url: URL) {
+        self.url = url
+    }
+    
+    public func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+        webView.navigationDelegate = context.coordinator
+        var req = URLRequest(url: url)
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        webView.load(req)
+        return webView
+    }
+    
+    public func updateUIView(_ uiView: WKWebView, context: Context) {}
+    
+    public func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    public final class Coordinator: NSObject, WKNavigationDelegate {
+        public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                for cookie in cookies {
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
             }
         }
     }

@@ -30,6 +30,11 @@ public final class HistoryRepository: ObservableObject {
     
     @Published public var historyItems: [ReadingProgress] = []
     @Published public private(set) var continueReadingItems: [ContinueReadingItem] = []
+    @Published public var isIncognitoMode: Bool = AppState.shared.incognitoMode {
+        didSet {
+            AppState.shared.incognitoMode = isIncognitoMode
+        }
+    }
     
     public var historyFileURL: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -37,8 +42,18 @@ public final class HistoryRepository: ObservableObject {
     }
     
     private init() {
+        self.isIncognitoMode = AppState.shared.incognitoMode
         loadHistoryFromDisk()
         updateContinueReadingItems()
+        
+        AppState.shared.$incognitoMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] incognito in
+                if self?.isIncognitoMode != incognito {
+                    self?.isIncognitoMode = incognito
+                }
+            }
+            .store(in: &cancellables)
         
         // Listen to database changes in case external updates occur
         db.$historyList
@@ -46,7 +61,7 @@ public final class HistoryRepository: ObservableObject {
             .sink { [weak self] dbHistory in
                 guard let self = self else { return }
                 if self.historyItems.isEmpty && !dbHistory.isEmpty {
-                    self.historyItems = dbHistory.sorted { $0.updatedAt > $1.updatedAt }
+                    self.historyItems = self.deduplicateByManga(dbHistory)
                     self.updateContinueReadingItems()
                     self.saveHistoryToDiskSync()
                 }
@@ -63,18 +78,39 @@ public final class HistoryRepository: ObservableObject {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let items = try decoder.decode([ReadingProgress].self, from: data)
-                self.historyItems = items.sorted { $0.updatedAt > $1.updatedAt }
+                self.historyItems = deduplicateByManga(items)
+                if self.historyItems.count != items.count {
+                    saveHistoryToDiskSync()
+                }
             } catch {
                 print("[HistoryRepository] Failed to decode reading_history.json: \(error)")
-                self.historyItems = db.historyList.sorted { $0.updatedAt > $1.updatedAt }
+                self.historyItems = deduplicateByManga(db.historyList)
             }
         } else {
             // Seed from db.historyList if available
-            self.historyItems = db.historyList.sorted { $0.updatedAt > $1.updatedAt }
+            self.historyItems = deduplicateByManga(db.historyList)
             if !self.historyItems.isEmpty {
                 saveHistoryToDiskSync()
             }
         }
+    }
+    
+    private func deduplicateByManga(_ items: [ReadingProgress]) -> [ReadingProgress] {
+        var grouped: [UUID: [ReadingProgress]] = [:]
+        for item in items {
+            grouped[item.mangaID, default: []].append(item)
+        }
+        
+        var deduplicated: [ReadingProgress] = []
+        for (_, group) in grouped {
+            guard let newest = group.max(by: { $0.updatedAt < $1.updatedAt }) else { continue }
+            let totalReadingTime = group.reduce(0.0) { $0 + $1.readingTimeSeconds }
+            var merged = newest
+            merged.readingTimeSeconds = totalReadingTime
+            deduplicated.append(merged)
+        }
+        
+        return deduplicated.sorted { $0.updatedAt > $1.updatedAt }
     }
     
     public func saveHistoryToDiskSync() {
@@ -103,15 +139,14 @@ public final class HistoryRepository: ObservableObject {
         coverURL: URL? = nil,
         additionalDuration: TimeInterval = 0
     ) {
-        if AppState.shared.incognitoMode {
+        if AppState.shared.incognitoMode || isIncognitoMode {
             return
         }
         
         let now = Date()
-        var existingDuration: TimeInterval = 0
-        if let existing = historyItems.first(where: { $0.chapterID == chapterID }) {
-            existingDuration = existing.readingTimeSeconds
-        }
+        let existingDuration = historyItems
+            .filter { $0.mangaID == mangaID }
+            .reduce(0.0) { $0 + $1.readingTimeSeconds }
         let totalDuration = existingDuration + additionalDuration
         
         let entry = ReadingProgress(
@@ -128,7 +163,7 @@ public final class HistoryRepository: ObservableObject {
             sourceID: sourceID
         )
         
-        historyItems.removeAll(where: { $0.chapterID == chapterID })
+        historyItems.removeAll(where: { $0.mangaID == mangaID })
         historyItems.insert(entry, at: 0)
         
         if historyItems.count > 300 {
@@ -146,15 +181,14 @@ public final class HistoryRepository: ObservableObject {
         totalPages: Int,
         additionalDuration: TimeInterval = 0
     ) {
-        if AppState.shared.incognitoMode {
+        if AppState.shared.incognitoMode || isIncognitoMode {
             return
         }
         
         let now = Date()
-        var existingDuration: TimeInterval = 0
-        if let existing = historyItems.first(where: { $0.chapterID == chapter.id }) {
-            existingDuration = existing.readingTimeSeconds
-        }
+        let existingDuration = historyItems
+            .filter { $0.mangaID == manga.id }
+            .reduce(0.0) { $0 + $1.readingTimeSeconds }
         let totalDuration = existingDuration + additionalDuration
         
         let entry = ReadingProgress(
@@ -171,8 +205,8 @@ public final class HistoryRepository: ObservableObject {
             sourceID: manga.sourceID
         )
         
-        // Remove existing entry for this chapter and prepend newest
-        historyItems.removeAll(where: { $0.chapterID == chapter.id })
+        // Remove existing entry for this manga and prepend newest
+        historyItems.removeAll(where: { $0.mangaID == manga.id })
         historyItems.insert(entry, at: 0)
         
         // Keep list bounded to 300 entries

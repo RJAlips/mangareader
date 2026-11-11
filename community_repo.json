@@ -17,14 +17,14 @@
     {
       "id": "com.mangareader.source.asurascans",
       "name": "Asura Scans",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "lang": "EN",
-      "iconURL": "https://asurascans.com/favicon.ico",
+      "iconURL": "https://asuracomic.net/favicon.ico",
       "description": "High quality action manhwa & webtoons translation group",
-      "baseURL": "https://asurascans.com",
-      "popularURL": "https://asurascans.com/browse?order=popular",
-      "latestURL": "https://asurascans.com/browse?order=update",
-      "searchURL": "https://asurascans.com/browse?q={query}",
+      "baseURL": "https://asuracomic.net",
+      "popularURL": "https://asuracomic.net/series?page=1",
+      "latestURL": "https://asuracomic.net/series?page=1",
+      "searchURL": "https://asuracomic.net/series?page=1&name={query}",
       "chaptersURL": null
     },
     {

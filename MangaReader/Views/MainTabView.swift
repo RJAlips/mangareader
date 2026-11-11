@@ -199,11 +199,12 @@ public struct HistoryView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     HStack(spacing: 6) {
                         Text("History")
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                            .foregroundColor(.textPrimary)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.white)
+                            .fixedSize(horizontal: true, vertical: false)
                         Image(systemName: "icloud")
-                            .font(.system(size: 13))
-                            .foregroundColor(.textSecondary)
+                            .font(.system(size: 15))
+                            .foregroundColor(Color(UIColor.secondaryLabel))
                     }
                 }
                 
@@ -211,24 +212,28 @@ public struct HistoryView: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Incognito Mode Toggle Button
                     Button {
-                        appState.incognitoMode.toggle()
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.impactOccurred()
+                        historyRepo.isIncognitoMode.toggle()
                     } label: {
-                        Image(systemName: appState.incognitoMode ? "eyeglasses" : "eyeglasses")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(appState.incognitoMode ? .mangaAccent : .textSecondary)
+                        Image(systemName: "eyeglasses")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(historyRepo.isIncognitoMode ? .mangaAccent : Color(hex: "#A0A0AB"))
                     }
                     .glassCircle(size: 34)
                     
                     // Glass Capsule with Search and Trash
                     HStack(spacing: 12) {
                         Button {
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
                             withAnimation(Theme.Animation.quick) {
                                 showSearchField.toggle()
                             }
                         } label: {
                             Image(systemName: "magnifyingglass")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(showSearchField ? .mangaAccent : .textPrimary)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(showSearchField ? .mangaAccent : .white)
                         }
                         
                         Rectangle()
@@ -236,11 +241,13 @@ public struct HistoryView: View {
                             .frame(width: 0.5, height: 14)
                         
                         Button {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
                             showClearConfirm = true
                         } label: {
                             Image(systemName: "trash")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.textPrimary)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.white)
                         }
                     }
                     .glassCapsule(height: 34, cornerRadius: 17, horizontalPadding: 11)
@@ -259,7 +266,8 @@ public struct HistoryView: View {
                 set: { activeReadingChapter = $0 }
             )) { ch in
                 if let manga = activeReadingManga {
-                    ReaderContainerView(manga: manga, chapter: ch, initialPage: ch.lastPageRead)
+                    let page = historyRepo.readingProgress(for: manga.id)?.lastPageRead ?? ch.lastPageRead
+                    ReaderContainerView(manga: manga, chapter: ch, initialPage: page)
                 }
             }
         }
@@ -269,12 +277,11 @@ public struct HistoryView: View {
     
     private var historyListView: some View {
         ScrollView {
-            LazyVStack(spacing: 10) {
+            LazyVStack(spacing: 0) {
                 ForEach(filteredItems) { item in
                     historyRow(item: item)
                 }
             }
-            .padding(.horizontal, 12)
             .padding(.top, 6)
             .padding(.bottom, 80)
         }
@@ -284,8 +291,8 @@ public struct HistoryView: View {
         let manga = getManga(for: item)
         let chapter = getChapter(for: item)
         
-        return HStack(spacing: 12) {
-            // Cover Image (68x96pt, cornerRadius: 8)
+        return HStack(alignment: .center, spacing: 14) {
+            // Left: AsyncMangaImage with exact dimensions (72pt width x 102pt height), cornerRadius: 8, contentMode: .fill, clipped
             NavigationLink(destination: MangaDetailView(manga: manga)) {
                 AsyncMangaImage(
                     url: item.coverURL,
@@ -293,93 +300,67 @@ public struct HistoryView: View {
                     cornerRadius: 8,
                     showShimmer: false
                 )
-                .frame(width: 68, height: 96)
+                .frame(width: 72, height: 102)
                 .clipped()
             }
             .buttonStyle(PlainButtonStyle())
             
-            // Metadata & Row Tap -> Reader
+            // Center VStack(alignment: .leading, spacing: 4)
             Button {
                 activeReadingManga = manga
                 activeReadingChapter = chapter
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.displayMangaTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.textPrimary)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
                         .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                     
                     Text(item.displayChapterTitle)
-                        .font(.system(size: 13))
-                        .foregroundColor(.textSecondary)
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(Color(hex: "#A0A0AB"))
                         .lineLimit(1)
                     
-                    // Progress & Duration Row
-                    HStack(spacing: 8) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "book.pages")
-                                .font(.system(size: 10))
-                                .foregroundColor(.mangaAccent)
-                            Text("Page \(item.pageIndex + 1) / \(max(1, item.totalPages))")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.mangaAccent)
-                        }
-                        
-                        HStack(spacing: 4) {
-                            Image(systemName: "book")
-                                .font(.system(size: 10))
-                                .foregroundColor(.textTertiary)
-                            Text(item.formattedReadingTime)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.textSecondary)
-                        }
+                    HStack(spacing: 5) {
+                        Image(systemName: "book")
+                            .font(.system(size: 12))
+                        Text(item.formattedReadingTime)
+                            .font(.system(size: 13))
                     }
+                    .foregroundColor(Color(hex: "#A0A0AB"))
                     .padding(.top, 1)
                     
-                    // Relative Date Row
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: "clock")
-                            .font(.system(size: 10))
-                            .foregroundColor(.textTertiary)
-                        Text(relativeTimeString(from: item.updatedAt))
-                            .font(.system(size: 11))
-                            .foregroundColor(.textTertiary)
+                            .font(.system(size: 12))
+                        Text(relativeDateString(from: item.updatedAt))
+                            .font(.system(size: 13))
                     }
+                    .foregroundColor(Color(hex: "#A0A0AB"))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(PlainButtonStyle())
             
-            Spacer()
-            
-            // Delete Entry Button & Resume Reading Button
-            VStack(alignment: .trailing, spacing: 14) {
-                Button {
+            // Right: Single trash icon button (font size 17, Color(hex: "#A0A0AB"))
+            Button {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+                withAnimation {
                     historyRepo.removeHistory(for: item.mangaID)
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 13))
-                        .foregroundColor(.textTertiary)
-                        .padding(4)
                 }
-                
-                Button {
-                    activeReadingManga = manga
-                    activeReadingChapter = chapter
-                } label: {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 22))
-                        .foregroundColor(.mangaAccent)
-                }
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 17))
+                    .foregroundColor(Color(hex: "#A0A0AB"))
+                    .padding(8)
             }
+            .buttonStyle(PlainButtonStyle())
         }
-        .padding(10)
-        .background(Color.surfacePrimary)
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
     }
     
     private func getManga(for progress: ReadingProgress) -> MangaItem {
@@ -397,7 +378,9 @@ public struct HistoryView: View {
     
     private func getChapter(for progress: ReadingProgress) -> ChapterItem {
         if let found = DatabaseManager.shared.chaptersList.first(where: { $0.id == progress.chapterID }) {
-            return found
+            var updated = found
+            updated.lastPageRead = progress.lastPageRead
+            return updated
         }
         return ChapterItem(
             id: progress.chapterID,
@@ -406,14 +389,30 @@ public struct HistoryView: View {
             chapterNumber: progress.chapterNumber ?? 1.0,
             title: progress.displayChapterTitle,
             pageCount: progress.totalPages,
-            lastPageRead: progress.pageIndex
+            lastPageRead: progress.lastPageRead
         )
     }
     
+    private func relativeDateString(from date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return "Today"
+        } else if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        } else {
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: Date())).day ?? 0
+            if days > 1 && days < 7 {
+                return "\(days) days ago"
+            } else {
+                let formatter = RelativeDateTimeFormatter()
+                formatter.unitsStyle = .full
+                return formatter.localizedString(for: date, relativeTo: Date())
+            }
+        }
+    }
+    
     private func relativeTimeString(from date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
+        relativeDateString(from: date)
     }
     
     // MARK: - Empty State
