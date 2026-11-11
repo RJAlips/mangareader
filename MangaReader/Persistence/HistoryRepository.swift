@@ -30,9 +30,11 @@ public final class HistoryRepository: ObservableObject {
     
     @Published public var historyItems: [ReadingProgress] = []
     @Published public private(set) var continueReadingItems: [ContinueReadingItem] = []
-    @Published public var isIncognitoMode: Bool = AppState.shared.incognitoMode {
-        didSet {
-            AppState.shared.incognitoMode = isIncognitoMode
+    public var isIncognitoMode: Bool {
+        get { AppState.shared.incognitoMode }
+        set {
+            AppState.shared.incognitoMode = newValue
+            objectWillChange.send()
         }
     }
     
@@ -42,18 +44,8 @@ public final class HistoryRepository: ObservableObject {
     }
     
     private init() {
-        self.isIncognitoMode = AppState.shared.incognitoMode
         loadHistoryFromDisk()
         updateContinueReadingItems()
-        
-        AppState.shared.$incognitoMode
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] incognito in
-                if self?.isIncognitoMode != incognito {
-                    self?.isIncognitoMode = incognito
-                }
-            }
-            .store(in: &cancellables)
         
         // Listen to database changes in case external updates occur
         db.$historyList
