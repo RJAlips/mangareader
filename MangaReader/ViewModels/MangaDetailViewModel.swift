@@ -14,6 +14,7 @@ public final class MangaDetailViewModel: ObservableObject {
     @Published public private(set) var chapters: [ChapterItem] = []
     @Published public var sortDescending: Bool = true
     @Published public var chapterSearchQuery: String = ""
+    @Published public var isLoading: Bool = false
     @Published public private(set) var isLoadingChapters: Bool = false
     @Published public private(set) var errorMessage: String? = nil
     
@@ -76,24 +77,45 @@ public final class MangaDetailViewModel: ObservableObject {
         refreshChapters()
     }
     
+    public func fetchChapters() {
+        refreshChapters()
+    }
+    
     public func refreshChapters() {
-        guard let source = SourceManager.shared.provider(for: manga.sourceID) else { return }
+        guard let source = SourceManager.shared.provider(for: manga.sourceID) else {
+            isLoading = false
+            isLoadingChapters = false
+            return
+        }
         
+        isLoading = true
         isLoadingChapters = true
         errorMessage = nil
         
         Task {
+            defer {
+                self.isLoading = false
+                self.isLoadingChapters = false
+            }
             do {
-                var fetched = try await source.fetchChapters(for: manga.urlOrSlug)
+                var slug = self.manga.urlOrSlug
+                if slug.trimmingCharacters(in: .whitespaces).isEmpty {
+                    if let results = try? await source.searchManga(query: self.manga.title, page: 1),
+                       let match = results.first(where: { $0.title.lowercased() == self.manga.title.lowercased() }) ?? results.first {
+                        slug = match.urlOrSlug
+                        self.manga.urlOrSlug = slug
+                        self.db.upsertManga(self.manga)
+                    }
+                }
+                guard !slug.isEmpty else { return }
+                var fetched = try await source.fetchChapters(for: slug)
                 for i in 0..<fetched.count {
-                    fetched[i].mangaID = manga.id
+                    fetched[i].mangaID = self.manga.id
                 }
                 self.chapters = fetched
                 self.db.upsertChapters(fetched)
-                self.isLoadingChapters = false
             } catch {
                 self.errorMessage = error.localizedDescription
-                self.isLoadingChapters = false
             }
         }
     }

@@ -223,7 +223,7 @@ public struct MangaDetailView: View {
                     Button {
                         showSafariSheet = true
                     } label: {
-                        Text(viewModel.manga.sourceID)
+                        Text(cleanSourceIDDisplay)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.mangaAccent)
                             .lineLimit(1)
@@ -251,8 +251,16 @@ public struct MangaDetailView: View {
         }
     }
     
+    private var cleanSourceIDDisplay: String {
+        let raw = viewModel.manga.sourceID
+        let clean = raw
+            .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
+            .replacingOccurrences(of: "com.mangareader.source.", with: "")
+        return clean.isEmpty ? "source" : clean
+    }
+    
     private var sourceName: String {
-        SourceManager.shared.getSource(id: viewModel.manga.sourceID)?.manifest.name ?? viewModel.manga.sourceID
+        SourceManager.shared.getSource(id: viewModel.manga.sourceID)?.manifest.name ?? cleanSourceIDDisplay.capitalized
     }
     
     // MARK: - 2. Action Bar (Add to Library | Tracking | Web View)

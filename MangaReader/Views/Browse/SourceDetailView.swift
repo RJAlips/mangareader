@@ -272,6 +272,11 @@ public struct SourceDetailView: View {
     }
     
     @MainActor
+    public func loadManga() {
+        loadData()
+    }
+    
+    @MainActor
     private func loadData() {
         currentFetchTask?.cancel()
         currentFetchTask = Task { @MainActor in
@@ -281,39 +286,61 @@ public struct SourceDetailView: View {
             showCloudflareBanner = false
             defer { isLoading = false }
             
+            var fetched: [MangaItem] = []
+            
             do {
-                let result: [MangaItem] = try await withThrowingTaskGroup(of: [MangaItem].self) { group in
-                    group.addTask {
-                        if selectedTab == 0 {
-                            return try await source.fetchPopular(page: 1)
-                        } else {
-                            return try await source.fetchLatest(page: 1)
-                        }
-                    }
-                    group.addTask {
-                        try await Task.sleep(nanoseconds: 12_000_000_000)
-                        throw MangaReaderError.cloudflareProtected(source.manifest.name)
-                    }
-                    
-                    if let first = try await group.next() {
-                        group.cancelAll()
-                        return first
-                    }
-                    return []
-                }
-                
-                if !Task.isCancelled {
-                    self.items = result
-                    if result.count < 10 {
-                        self.hasMorePages = false
-                    }
-                }
+                fetched = try await fetchWithTimeout(page: 1)
             } catch {
                 let errStr = "\(error)".lowercased()
-                if errStr.contains("cloudflare") || errStr.contains("408") || errStr.contains("timeout") || errStr.contains("403") {
+                if errStr.contains("cloudflare") || errStr.contains("408") || errStr.contains("timeout") || errStr.contains("403") || errStr.contains("503") {
                     showCloudflareBanner = true
                 }
             }
+            
+            // Automatically solve Cloudflare challenge with invisible WKWebView if empty or blocked
+            if fetched.isEmpty && !Task.isCancelled {
+                let targetURL = (selectedTab == 0 ? (source.popularURL ?? URL(string: source.manifest.baseURL)) : (source.latestURL ?? URL(string: source.manifest.baseURL))) ?? URL(string: source.manifest.baseURL)
+                if let url = targetURL {
+                    _ = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: source.manifest.baseURL)
+                    if let retryItems = try? await fetchWithTimeout(page: 1), !retryItems.isEmpty {
+                        fetched = retryItems
+                        showCloudflareBanner = false
+                    }
+                }
+            }
+            
+            if !Task.isCancelled {
+                if fetched.isEmpty {
+                    showCloudflareBanner = true
+                } else {
+                    self.items = fetched
+                    if fetched.count < 10 {
+                        self.hasMorePages = false
+                    }
+                }
+            }
+        }
+    }
+    
+    private func fetchWithTimeout(page: Int) async throws -> [MangaItem] {
+        try await withThrowingTaskGroup(of: [MangaItem].self) { group in
+            group.addTask {
+                if selectedTab == 0 {
+                    return try await source.fetchPopular(page: page)
+                } else {
+                    return try await source.fetchLatest(page: page)
+                }
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 12_000_000_000)
+                throw MangaReaderError.cloudflareProtected(source.manifest.name)
+            }
+            
+            if let first = try await group.next() {
+                group.cancelAll()
+                return first
+            }
+            return []
         }
     }
     

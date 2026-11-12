@@ -9,7 +9,7 @@
       "iconURL": "https://aquareader.org/favicon.ico",
       "description": "Popular manhwa, manhua and manga titles from Aqua Manga",
       "baseURL": "https://aquareader.org",
-      "popularURL": "https://aquareader.org/",
+      "popularURL": "https://aquareader.org/manga/?m_orderby=views",
       "latestURL": "https://aquareader.org/manga/?m_orderby=latest",
       "searchURL": "https://aquareader.org/?s={query}&post_type=wp-manga",
       "chaptersURL": null

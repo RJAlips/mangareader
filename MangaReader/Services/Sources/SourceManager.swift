@@ -198,11 +198,17 @@ public final class SourceManager: ObservableObject {
         }
         
         // 2. Flexible fallback: match prefix, suffix or clean name
-        let clean = id.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean = id.lowercased()
+            .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
+            .replacingOccurrences(of: "com.mangareader.source.", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if let match = sources.first(where: {
             let sId = $0.manifest.id.lowercased()
+            let sClean = sId
+                .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
+                .replacingOccurrences(of: "com.mangareader.source.", with: "")
             let sName = $0.manifest.name.lowercased()
-            return sId == clean || sId.contains(clean) || clean.contains(sId) || sName.contains(clean) || clean.contains(sName)
+            return sId == id.lowercased() || sClean == clean || sId.hasSuffix(".\(clean)") || sName.contains(clean) || clean.contains(sName)
         }) {
             return match
         }
@@ -210,8 +216,11 @@ public final class SourceManager: ObservableObject {
         // 3. Match from installedManifests and instantiate dynamically
         if let manifest = installedManifests.first(where: {
             let mId = $0.id.lowercased()
+            let mClean = mId
+                .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
+                .replacingOccurrences(of: "com.mangareader.source.", with: "")
             let mName = $0.name.lowercased()
-            return mId == clean || mId.contains(clean) || clean.contains(mId) || mName.contains(clean) || clean.contains(mName)
+            return mId == id.lowercased() || mClean == clean || mId.hasSuffix(".\(clean)") || mName.contains(clean) || clean.contains(mName)
         }) {
             let dynamicSource = CommunityWebSource(
                 manifest: manifest,
@@ -1062,20 +1071,27 @@ private final class OffscreenWebSession: NSObject, WKNavigationDelegate, @unchec
     
     @MainActor
     private func waitForDOMAndExtract(webView: WKWebView) async {
-        for _ in 0..<4 {
+        for _ in 0..<8 {
             let hasCards = await (try? webView.evaluateJavaScript(
-                "(document.querySelector('script#__NEXT_DATA__') !== null || document.querySelector('.series-card, .bsx, .page-item-detail, a[href*=\"/series/\"], a[href*=\"/manga/\"]') !== null)"
+                "(document.querySelector('script#__NEXT_DATA__') !== null || document.querySelector('.series-card, .bsx, .page-item-detail, a[href*=\"/series/\"], a[href*=\"/manga/\"], a[href*=\"/comics/\"]') !== null)"
             ) as? Bool) ?? false
             
-            if hasCards {
+            let isCloudflare = await (try? webView.evaluateJavaScript(
+                "(document.title.toLowerCase().includes('just a moment') || document.body.innerText.toLowerCase().includes('verifying you are human'))"
+            ) as? Bool) ?? false
+            
+            if hasCards && !isCloudflare {
                 break
             }
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
         
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-            for cookie in cookies {
-                HTTPCookieStorage.shared.setCookie(cookie)
+        await withCheckedContinuation { cont in
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                for cookie in cookies {
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
+                cont.resume()
             }
         }
         
@@ -1603,19 +1619,20 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
     // MARK: - Scraper Helpers & Image Attribute Priority
     
     public static func extractImageURL(from tag: String, relativeTo baseURL: URL?) -> URL? {
-        // Priority order as required:
+        // Priority order:
         // 1. data-src
         // 2. data-lazy-src
         // 3. data-cfsrc
         // 4. data-original (and data-manga-src)
         // 5. srcset / data-srcset (first URL before space/comma)
-        // 6. src (only if not starting with data:image)
+        // 6. src (strictly ignoring data:image placeholders)
         
         let singleAttrs = ["data-src", "data-lazy-src", "data-cfsrc", "data-original", "data-manga-src"]
         for attr in singleAttrs {
-            let pattern = "\(attr)\\s*=\\s*[\"']([^\"']+)[\"']"
+            let pattern = "(?:^|\\s)\(attr)\\s*=\\s*[\"']?([^\"'\\s>]+)[\"']?"
             if let raw = extractRegexFirst(pattern: pattern, in: tag) {
-                if let sanitized = sanitizeImageURL(raw, baseURL: baseURL) {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.lowercased().hasPrefix("data:image"), let sanitized = sanitizeImageURL(trimmed, baseURL: baseURL) {
                     return sanitized
                 }
             }
@@ -1623,18 +1640,21 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         
         let setAttrs = ["data-srcset", "srcset"]
         for attr in setAttrs {
-            let pattern = "\(attr)\\s*=\\s*[\"']([^\"']+)[\"']"
+            let pattern = "(?:^|\\s)\(attr)\\s*=\\s*[\"']([^\"']+)[\"']"
             if let raw = extractRegexFirst(pattern: pattern, in: tag) {
-                let firstCand = raw.components(separatedBy: ",").first?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .components(separatedBy: .whitespaces).first
-                if let cand = firstCand, let sanitized = sanitizeImageURL(cand, baseURL: baseURL) {
-                    return sanitized
+                let candidates = raw.components(separatedBy: ",")
+                for candidate in candidates {
+                    let firstURL = candidate.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .whitespaces).first ?? ""
+                    if !firstURL.isEmpty && !firstURL.lowercased().hasPrefix("data:image") {
+                        if let sanitized = sanitizeImageURL(firstURL, baseURL: baseURL) {
+                            return sanitized
+                        }
+                    }
                 }
             }
         }
         
-        let srcPattern = "src\\s*=\\s*[\"']([^\"']+)[\"']"
+        let srcPattern = "(?:^|\\s)src\\s*=\\s*[\"']?([^\"'\\s>]+)[\"']?"
         if let raw = extractRegexFirst(pattern: srcPattern, in: tag) {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.lowercased().hasPrefix("data:image") {
@@ -1750,7 +1770,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         }
         
         // 2. Engine A & B: Card containers (Madara, MangaThemesia, Next.js HTML cards)
-        let cardContainerPattern = #"<(?:div|article)[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|unit|col-6|col-md-2|article|grid-item|animposx)[^"]*"[^>]*>[\s\S]*?</(?:div|article)>\s*(?:</div>)?"#
+        let cardContainerPattern = #"<(?:div|article)[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|col-md-2|article|grid-item|animposx)[^"]*"[^>]*>[\s\S]*?</(?:div|article)>\s*(?:</div>)?"#
         if let cardRegex = try? NSRegularExpression(pattern: cardContainerPattern, options: .caseInsensitive) {
             let matches = cardRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
             for m in matches {
@@ -1764,6 +1784,7 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 if slugLower == "manga" || slugLower == "comics" || slugLower == "series" ||
                    slugLower == "browse" || slugLower == "latest" || slugLower == "popular" ||
                    slugLower == "bookmark" || slugLower.contains("/page/") || slugLower.hasPrefix("page/") ||
+                   slugLower.contains("chapter") || slugLower.contains("/ch-") || slugLower.hasPrefix("ch-") ||
                    slug.count < 3 {
                     continue
                 }
@@ -1779,9 +1800,26 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                     title = formatTitleFromSlug(slug)
                 }
                 
+                if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   t.hasPrefix("#") || t.lowercased().hasPrefix("chapter ") || t.lowercased().hasPrefix("ch ") || t.lowercased().hasPrefix("ch.") {
+                    continue
+                }
+                
                 var coverURL: URL? = nil
-                if let imgTag = extractRegex(pattern: #"<img[^>]+>"#, in: cardHTML) {
-                    coverURL = Self.extractImageURL(from: imgTag, relativeTo: base)
+                // Prioritize data-src, data-lazy-src, data-cfsrc across all img tags in cardHTML
+                let imgPattern = #"<img[^>]+>"#
+                if let imgRegex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
+                    let imgMatches = imgRegex.matches(in: cardHTML, range: NSRange(location: 0, length: (cardHTML as NSString).length))
+                    for imgMatch in imgMatches {
+                        let tag = (cardHTML as NSString).substring(with: imgMatch.range)
+                        if let extracted = Self.extractImageURL(from: tag, relativeTo: base) {
+                            coverURL = extracted
+                            break
+                        }
+                    }
+                }
+                if coverURL == nil {
+                    coverURL = Self.extractImageURL(from: cardHTML, relativeTo: base)
                 }
                 
                 seenSlugs.insert(slug)
