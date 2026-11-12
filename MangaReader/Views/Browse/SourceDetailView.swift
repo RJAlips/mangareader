@@ -299,7 +299,9 @@ public struct SourceDetailView: View {
             
             // Automatically solve Cloudflare challenge with invisible WKWebView if empty or blocked
             if fetched.isEmpty && !Task.isCancelled {
-                let targetURL = (selectedTab == 0 ? (source.popularURL ?? URL(string: source.manifest.baseURL)) : (source.latestURL ?? URL(string: source.manifest.baseURL))) ?? URL(string: source.manifest.baseURL)
+                let community = source as? CommunityWebSource
+                let customURLStr = selectedTab == 0 ? community?.popularURL : community?.latestURL
+                let targetURL = (customURLStr.flatMap { URL(string: $0) }) ?? URL(string: source.manifest.baseURL)
                 if let url = targetURL {
                     _ = try? await WebScraperEngine.shared.fetchHTML(url: url, referer: source.manifest.baseURL)
                     if let retryItems = try? await fetchWithTimeout(page: 1), !retryItems.isEmpty {

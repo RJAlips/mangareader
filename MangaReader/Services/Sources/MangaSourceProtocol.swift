@@ -27,6 +27,14 @@ extension MangaSource {
         manifest.baseURL
     }
     
+    public var popularURL: URL? {
+        (self as? CommunityWebSource)?.popularURL.flatMap { URL(string: $0) } ?? URL(string: manifest.baseURL)
+    }
+    
+    public var latestURL: URL? {
+        (self as? CommunityWebSource)?.latestURL.flatMap { URL(string: $0) } ?? URL(string: manifest.baseURL)
+    }
+    
     public func fetchPopularManga(page: Int = 1) async throws -> [MangaItem] {
         return try await fetchPopular(page: page)
     }
