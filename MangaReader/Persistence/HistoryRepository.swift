@@ -129,7 +129,8 @@ public final class HistoryRepository: ObservableObject {
         chapterTitle: String? = nil,
         chapterNumber: Double? = nil,
         coverURL: URL? = nil,
-        additionalDuration: TimeInterval = 0
+        additionalDuration: TimeInterval = 0,
+        urlOrSlug: String? = nil
     ) {
         if AppState.shared.incognitoMode || isIncognitoMode {
             return
@@ -152,7 +153,8 @@ public final class HistoryRepository: ObservableObject {
             chapterTitle: chapterTitle,
             chapterNumber: chapterNumber,
             coverURL: coverURL,
-            sourceID: sourceID
+            sourceID: sourceID,
+            urlOrSlug: urlOrSlug
         )
         
         historyItems.removeAll(where: { $0.mangaID == mangaID })
@@ -194,7 +196,8 @@ public final class HistoryRepository: ObservableObject {
             chapterTitle: chapter.displayTitle,
             chapterNumber: chapter.chapterNumber,
             coverURL: manga.coverURL,
-            sourceID: manga.sourceID
+            sourceID: manga.sourceID,
+            urlOrSlug: manga.urlOrSlug
         )
         
         // Remove existing entry for this manga and prepend newest

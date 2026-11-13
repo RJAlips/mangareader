@@ -191,6 +191,14 @@ public final class SourceManager: ObservableObject {
         }
     }
     
+    public static func cleanSourceID(_ id: String) -> String {
+        return id.lowercased()
+            .replacingOccurrences(of: "com.rjalips.mangareader.source.", with: "")
+            .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
+            .replacingOccurrences(of: "com.mangareader.source.", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     public func provider(for id: String) -> (any MangaSource)? {
         // 1. Exact ID match in active sources
         if let exact = sources.first(where: { $0.manifest.id == id }) {
@@ -198,15 +206,10 @@ public final class SourceManager: ObservableObject {
         }
         
         // 2. Flexible fallback: match prefix, suffix or clean name
-        let clean = id.lowercased()
-            .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
-            .replacingOccurrences(of: "com.mangareader.source.", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean = Self.cleanSourceID(id)
         if let match = sources.first(where: {
             let sId = $0.manifest.id.lowercased()
-            let sClean = sId
-                .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
-                .replacingOccurrences(of: "com.mangareader.source.", with: "")
+            let sClean = Self.cleanSourceID(sId)
             let sName = $0.manifest.name.lowercased()
             return sId == id.lowercased() || sClean == clean || sId.hasSuffix(".\(clean)") || sName.contains(clean) || clean.contains(sName)
         }) {
@@ -216,9 +219,7 @@ public final class SourceManager: ObservableObject {
         // 3. Match from installedManifests and instantiate dynamically
         if let manifest = installedManifests.first(where: {
             let mId = $0.id.lowercased()
-            let mClean = mId
-                .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
-                .replacingOccurrences(of: "com.mangareader.source.", with: "")
+            let mClean = Self.cleanSourceID(mId)
             let mName = $0.name.lowercased()
             return mId == id.lowercased() || mClean == clean || mId.hasSuffix(".\(clean)") || mName.contains(clean) || clean.contains(mName)
         }) {
@@ -1142,11 +1143,32 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         chaptersURL: String? = nil
     ) {
         self.manifest = manifest
-        self.baseURLString = baseURLString
-        self.popularURL = popularURL
-        self.latestURL = latestURL
-        self.searchURL = searchURL
-        self.chaptersURL = chaptersURL
+        var base = baseURLString
+        if base.contains("asuracomic.net") {
+            base = "https://asurascans.com"
+        }
+        self.baseURLString = base
+        
+        var pop = popularURL ?? manifest.popularURL
+        var lat = latestURL ?? manifest.latestURL
+        var sea = searchURL ?? manifest.searchURL
+        
+        if base.contains("asurascans.com") {
+            if pop == nil || pop?.contains("asuracomic.net") == true || pop?.contains("/series") == true {
+                pop = "https://asurascans.com/browse"
+            }
+            if lat == nil || lat?.contains("asuracomic.net") == true || lat?.contains("/series") == true {
+                lat = "https://asurascans.com/browse"
+            }
+            if sea == nil || sea?.contains("asuracomic.net") == true || sea?.contains("/series") == true {
+                sea = "https://asurascans.com/browse?search={query}"
+            }
+        }
+        
+        self.popularURL = pop
+        self.latestURL = lat
+        self.searchURL = sea
+        self.chaptersURL = chaptersURL ?? manifest.chaptersURL
     }
     
     // MARK: - Popular Titles
@@ -1155,6 +1177,8 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         if page == 1 {
             candidateURLs = [
                 popularURL,
+                "\(baseURLString)/browse",
+                "\(baseURLString)/browse?order=popular",
                 "\(baseURLString)/series?order=popular",
                 "\(baseURLString)/series",
                 "\(baseURLString)/manga/page/1/?m_orderby=views",
@@ -1179,6 +1203,8 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
             candidateURLs = [
                 pagedPopular,
+                "\(baseURLString)/browse?page=\(page)",
+                "\(baseURLString)/browse?page=\(page)&order=popular",
                 "\(baseURLString)/series?page=\(page)&order=popular",
                 "\(baseURLString)/series?page=\(page)",
                 "\(baseURLString)/manga/page/\(page)/?m_orderby=views",
@@ -1214,6 +1240,9 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         if page == 1 {
             candidateURLs = [
                 latestURL,
+                "\(baseURLString)/browse",
+                "\(baseURLString)/browse?order=update",
+                "\(baseURLString)/latest-updates/",
                 "\(baseURLString)/series?order=update",
                 "\(baseURLString)/series",
                 "\(baseURLString)/manga/page/1/?m_orderby=latest",
@@ -1238,6 +1267,9 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
             candidateURLs = [
                 pagedLatest,
+                "\(baseURLString)/browse?page=\(page)",
+                "\(baseURLString)/browse?page=\(page)&order=update",
+                "\(baseURLString)/latest-updates/page/\(page)/",
                 "\(baseURLString)/series?page=\(page)&order=update",
                 "\(baseURLString)/series?page=\(page)",
                 "\(baseURLString)/manga/page/\(page)/?m_orderby=latest",
@@ -1290,16 +1322,18 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         if page == 1 {
             candidateSearchURLs = [
                 customSearch,
-                "\(baseURLString)/series?page=1&name=\(encoded)",
+                "\(baseURLString)/browse?search=\(encoded)",
                 "\(baseURLString)/browse?q=\(encoded)",
+                "\(baseURLString)/series?page=1&name=\(encoded)",
                 "\(baseURLString)/?s=\(encoded)&post_type=wp-manga",
                 "\(baseURLString)/?s=\(encoded)"
             ].compactMap { $0 }.compactMap { URL(string: $0) }
         } else {
             candidateSearchURLs = [
                 customSearch,
-                "\(baseURLString)/series?page=\(page)&name=\(encoded)",
+                "\(baseURLString)/browse?search=\(encoded)&page=\(page)",
                 "\(baseURLString)/browse?page=\(page)&q=\(encoded)",
+                "\(baseURLString)/series?page=\(page)&name=\(encoded)",
                 "\(baseURLString)/page/\(page)/?s=\(encoded)&post_type=wp-manga",
                 "\(baseURLString)/page/\(page)/?s=\(encoded)",
                 "\(baseURLString)/?s=\(encoded)&page=\(page)"
@@ -1720,10 +1754,71 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
         return parsed
     }
     
-    private func parseMangaItemsFromHTML(_ html: String, pageURL: URL) -> [MangaItem] {
+    public func parseTitles(from html: String, relativeTo: URL? = nil) -> [MangaItem] {
+        return parseMangaItemsFromHTML(html, pageURL: relativeTo ?? URL(string: baseURLString))
+    }
+
+    public static func isJunkTitle(_ title: String?) -> Bool {
+        guard let title = title else { return true }
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty || t.count < 2 { return true }
+        if t.hasPrefix("#") { return true }
+        
+        let lower = t.lowercased()
+        if lower.hasPrefix("chapter ") || lower.hasPrefix("ch ") || lower.hasPrefix("ch.") ||
+           lower.hasPrefix("episode ") || lower.hasPrefix("ep ") || lower.hasPrefix("ep.") ||
+           lower.hasPrefix("vol.") || lower.hasPrefix("volume ") ||
+           lower == "manhua" || lower == "manhwa" || lower == "manga" ||
+           lower == "popular" || lower == "latest" || lower == "ongoing" || lower == "completed" ||
+           lower == "all" || lower == "novel" || lower == "novels" || lower == "comics" || lower == "series" ||
+           lower == "bookmark" || lower == "read now" || lower == "view all" {
+            return true
+        }
+        
+        let junkRegex = #"^(ch\.?|chap\.?|chapter\s*\d+.*|ep\.?\s*\d+.*|manhua|manhwa|manga|popular|latest|ongoing|completed|#.*)$"#
+        if let regex = try? NSRegularExpression(pattern: junkRegex, options: .caseInsensitive) {
+            let range = NSRange(location: 0, length: (t as NSString).length)
+            if regex.firstMatch(in: t, options: [], range: range) != nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    public static func isRejectedURLPath(_ pathOrSlug: String) -> Bool {
+        let lower = pathOrSlug.lowercased()
+        if lower.contains("/chapter") || lower.contains("/ch-") || lower.contains("/ch/") ||
+           lower.contains("/ep-") || lower.contains("/ep/") ||
+           lower.contains("/page/") || lower.contains("?page=") ||
+           lower.contains("/type/") || lower.contains("?type=") ||
+           lower.contains("?s=") || lower.contains("?m_orderby=") ||
+           lower.contains("#") ||
+           lower == "manga" || lower == "comics" || lower == "series" ||
+           lower == "browse" || lower == "latest" || lower == "popular" ||
+           lower == "bookmark" || lower == "feed" || lower.hasSuffix(".rss") || lower.hasSuffix(".xml") ||
+           lower.contains("/genre/") || lower.contains("/tag/") || lower.contains("/author/") {
+            return true
+        }
+        return false
+    }
+
+    public static func isValidSeriesURL(_ link: String) -> Bool {
+        if isRejectedURLPath(link) { return false }
+        let clean = link.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let pattern = #"(?:^|/)(?:manga|series|comic|comics|manhwa|manhua)/[^/?#]+/?$"#
+        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+            let range = NSRange(location: 0, length: (clean as NSString).length)
+            if regex.firstMatch(in: clean, options: [], range: range) != nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    public func parseMangaItemsFromHTML(_ html: String, pageURL: URL? = nil) -> [MangaItem] {
         var results: [MangaItem] = []
         var seenSlugs = Set<String>()
-        let base = URL(string: baseURLString)
+        let base = pageURL ?? URL(string: baseURLString)
         let ns = html as NSString
         
         // 1. Engine C: Next.js __NEXT_DATA__ JSON script tag
@@ -1743,23 +1838,25 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             else if let nested = pageProps["series"] as? [String: Any], let arr = nested["data"] as? [[String: Any]] { seriesList = arr }
             
             for item in seriesList {
-                let title = (item["title"] as? String) ?? (item["name"] as? String) ?? (item["post_title"] as? String) ?? "Untitled"
+                let title = (item["title"] as? String) ?? (item["name"] as? String) ?? (item["post_title"] as? String) ?? ""
+                guard !Self.isJunkTitle(title) else { continue }
                 let rawSlug = (item["slug"] as? String) ?? (item["id"] as? String) ?? (item["series_slug"] as? String) ?? ""
                 guard !rawSlug.isEmpty else { continue }
                 let slug = sanitizeSlug(from: rawSlug)
-                guard !seenSlugs.contains(slug) else { continue }
-                seenSlugs.insert(slug)
+                guard !seenSlugs.contains(slug), !Self.isRejectedURLPath(slug) else { continue }
                 
                 var coverURL: URL? = nil
                 if let thumb = (item["thumbnail"] as? String) ?? (item["cover"] as? String) ?? (item["image"] as? String) ?? (item["poster"] as? String) {
                     coverURL = Self.sanitizeImageURL(thumb, baseURL: base)
                 }
+                guard let validCover = coverURL, validCover.absoluteString.hasPrefix("http") else { continue }
                 
+                seenSlugs.insert(slug)
                 results.append(MangaItem(
                     sourceID: manifest.id,
                     urlOrSlug: slug,
                     title: Self.unescapeHTML(title),
-                    coverURL: coverURL,
+                    coverURL: validCover,
                     genres: ["Manhwa", "Manga"],
                     status: .ongoing
                 ))
@@ -1769,44 +1866,39 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             }
         }
         
-        // 2. Engine A & B: Card containers (Madara, MangaThemesia, Next.js HTML cards)
-        let cardContainerPattern = #"<(?:div|article)[^>]+class="[^"]*(?:series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|col-md-2|article|grid-item|animposx)[^"]*"[^>]*>[\s\S]*?</(?:div|article)>\s*(?:</div>)?"#
+        // 2. Engine A & B: Structured Card Containers (Madara, Aqua Manga, MangaThemesia, Asura Astro, etc.)
+        let cardContainerPattern = #"<(?:article|div)[^>]+class="[^"]*(?:aqua-manga-card|aqua-archive-card|series-card|page-item-detail|bsx|utao|manga-item|listupd|bs-item|bs|manga-card|book-item|slider__item|bigor|col-md-2|grid-item|animposx)[^"]*"[^>]*>[\s\S]*?</(?:article|div)>\s*(?:</div>)?"#
         if let cardRegex = try? NSRegularExpression(pattern: cardContainerPattern, options: .caseInsensitive) {
             let matches = cardRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
             for m in matches {
                 let cardHTML = ns.substring(with: m.range)
                 
-                guard let link = extractRegex(pattern: #"<a[^>]+href="([^"]+)""#, in: cardHTML) else { continue }
-                let slug = sanitizeSlug(from: link)
-                guard !slug.isEmpty, !seenSlugs.contains(slug) else { continue }
-                
-                let slugLower = slug.lowercased()
-                if slugLower == "manga" || slugLower == "comics" || slugLower == "series" ||
-                   slugLower == "browse" || slugLower == "latest" || slugLower == "popular" ||
-                   slugLower == "bookmark" || slugLower.contains("/page/") || slugLower.hasPrefix("page/") ||
-                   slugLower.contains("chapter") || slugLower.contains("/ch-") || slugLower.hasPrefix("ch-") ||
-                   slug.count < 3 {
+                let allLinks = extractAllRegex(pattern: #"<a[^>]+href="([^"]+)""#, in: cardHTML)
+                guard let seriesLink = allLinks.first(where: { Self.isValidSeriesURL($0) }) ?? allLinks.first(where: { !Self.isRejectedURLPath($0) && ($0.contains("/manga/") || $0.contains("/series/") || $0.contains("/comic/")) }) else {
                     continue
                 }
                 
-                var title = extractRegex(pattern: #"<(?:h[1-6]|div|span|p|a)[^>]+class="[^"]*(?:title|post-title|tt|entry-title)[^"]*"[^>]*>([^<]+)<"#, in: cardHTML)
-                if title == nil || title?.isEmpty == true {
+                let slug = sanitizeSlug(from: seriesLink)
+                guard !slug.isEmpty, !seenSlugs.contains(slug), !Self.isRejectedURLPath(slug) else { continue }
+                
+                var title = extractRegex(pattern: #"<(?:h[1-6]|div|span|p|a)[^>]+class="[^"]*(?:title|post-title|tt|entry-title|aqua-manga-card__title|aqua-archive-card__title)[^"]*"[^>]*>([^<]+)<"#, in: cardHTML)
+                if title == nil || title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true || Self.isJunkTitle(title) {
                     title = extractRegex(pattern: #"title="([^"]+)""#, in: cardHTML)
                 }
-                if title == nil || title?.isEmpty == true {
+                if title == nil || title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true || Self.isJunkTitle(title) {
                     title = extractRegex(pattern: #"alt="([^"]+)""#, in: cardHTML)
                 }
-                if title == nil || title?.isEmpty == true {
-                    title = formatTitleFromSlug(slug)
+                if title == nil || Self.isJunkTitle(title) {
+                    let formatted = formatTitleFromSlug(slug)
+                    if !Self.isJunkTitle(formatted) {
+                        title = formatted
+                    }
                 }
-                
-                if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   t.hasPrefix("#") || t.lowercased().hasPrefix("chapter ") || t.lowercased().hasPrefix("ch ") || t.lowercased().hasPrefix("ch.") {
+                guard let finalTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines), !Self.isJunkTitle(finalTitle) else {
                     continue
                 }
                 
                 var coverURL: URL? = nil
-                // Prioritize data-src, data-lazy-src, data-cfsrc across all img tags in cardHTML
                 let imgPattern = #"<img[^>]+>"#
                 if let imgRegex = try? NSRegularExpression(pattern: imgPattern, options: .caseInsensitive) {
                     let imgMatches = imgRegex.matches(in: cardHTML, range: NSRange(location: 0, length: (cardHTML as NSString).length))
@@ -1821,15 +1913,29 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
                 if coverURL == nil {
                     coverURL = Self.extractImageURL(from: cardHTML, relativeTo: base)
                 }
+                guard let validCover = coverURL, validCover.absoluteString.hasPrefix("http") else {
+                    continue
+                }
+                
+                var latestChapterTitle: String? = nil
+                let chapterPattern = #"<a[^>]+href="[^"]*(?:chapter|ch-)[^"]*"[^>]*>([\s\S]*?)</a>"#
+                if let chMatch = extractRegex(pattern: chapterPattern, in: cardHTML) {
+                    let cleanCh = chMatch.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                                         .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanCh.isEmpty && cleanCh.count <= 40 {
+                        latestChapterTitle = cleanCh
+                    }
+                }
                 
                 seenSlugs.insert(slug)
                 results.append(MangaItem(
                     sourceID: manifest.id,
                     urlOrSlug: slug,
-                    title: Self.unescapeHTML(title ?? slug),
-                    coverURL: coverURL,
+                    title: Self.unescapeHTML(finalTitle),
+                    coverURL: validCover,
                     genres: ["Manhwa", "Manga"],
-                    status: .ongoing
+                    status: .ongoing,
+                    latestChapterTitle: latestChapterTitle
                 ))
             }
         }
@@ -1838,58 +1944,107 @@ public final class CommunityWebSource: MangaSource, @unchecked Sendable {
             return results
         }
         
-        // 3. Anchor tags linking to /series/, /comics/, /manga/
-        let linkPattern = #"<a[^>]+href="([^"]*(?:/manga/|/comics/|/series/)[^"]*)"[^>]*>([\s\S]*?)</a>"#
+        // 3. Step B Grouping Fallback: Scans all <a> tags, groups by series slug, and strictly discards junk
+        struct SeriesCandidate {
+            var slug: String
+            var title: String?
+            var coverURL: URL?
+            var latestChapterTitle: String?
+        }
+        
+        var seriesMap: [String: SeriesCandidate] = [:]
+        var seriesOrder: [String] = []
+        
+        let linkPattern = #"<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>"#
         if let linkRegex = try? NSRegularExpression(pattern: linkPattern, options: .caseInsensitive) {
             let matches = linkRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
             for m in matches {
                 guard m.numberOfRanges > 2 else { continue }
-                let link = ns.substring(with: m.range(at: 1))
-                let inner = ns.substring(with: m.range(at: 2))
+                let link = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let inner = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
                 
-                let slug = sanitizeSlug(from: link)
-                guard !slug.isEmpty, !seenSlugs.contains(slug) else { continue }
-                
-                let slugLower = slug.lowercased()
-                if slugLower == "manga" || slugLower == "comics" || slugLower == "series" ||
-                   slugLower == "browse" || slugLower == "latest" || slugLower == "popular" ||
-                   slugLower == "bookmark" || slugLower.contains("/page/") || slugLower.hasPrefix("page/") ||
-                   slug.count < 3 {
+                let lowerLink = link.lowercased()
+                if lowerLink.contains("/chapter") || lowerLink.contains("/ch-") {
+                    let cleanInner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                                          .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanInner.isEmpty && cleanInner.count <= 40 {
+                        for parentSlug in seriesOrder {
+                            if link.contains(parentSlug) || (parentSlug.components(separatedBy: "/").last.map({ link.contains($0) }) == true) {
+                                if seriesMap[parentSlug]?.latestChapterTitle == nil {
+                                    seriesMap[parentSlug]?.latestChapterTitle = cleanInner
+                                }
+                                break
+                            }
+                        }
+                    }
                     continue
                 }
                 
-                var coverURL: URL? = nil
-                if let imgTag = extractRegex(pattern: #"<img[^>]+>"#, in: inner) {
-                    coverURL = Self.extractImageURL(from: imgTag, relativeTo: base)
+                guard !Self.isRejectedURLPath(link) else { continue }
+                guard Self.isValidSeriesURL(link) || link.contains("/manga/") || link.contains("/series/") || link.contains("/comic/") else {
+                    continue
                 }
                 
-                var title = extractRegex(pattern: #"<(?:h[1-6]|div|span|p)[^>]*>([^<]+)<"#, in: inner)
-                if title == nil || title?.isEmpty == true {
-                    title = extractRegex(pattern: #"title="([^"]+)""#, in: inner)
+                let slug = sanitizeSlug(from: link)
+                guard !slug.isEmpty, !Self.isRejectedURLPath(slug) else { continue }
+                
+                if seriesMap[slug] == nil {
+                    seriesMap[slug] = SeriesCandidate(slug: slug, title: nil, coverURL: nil, latestChapterTitle: nil)
+                    seriesOrder.append(slug)
                 }
-                if title == nil || title?.isEmpty == true {
-                    let cleanInner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !cleanInner.isEmpty && cleanInner.count < 60 {
-                        title = cleanInner
+                
+                if seriesMap[slug]?.coverURL == nil, let imgTag = extractRegex(pattern: #"<img[^>]+>"#, in: inner) {
+                    if let img = Self.extractImageURL(from: imgTag, relativeTo: base) {
+                        seriesMap[slug]?.coverURL = img
                     }
                 }
-                if title == nil || title?.isEmpty == true {
-                    title = formatTitleFromSlug(slug)
-                }
                 
-                seenSlugs.insert(slug)
-                results.append(MangaItem(
-                    sourceID: manifest.id,
-                    urlOrSlug: slug,
-                    title: Self.unescapeHTML(title ?? slug),
-                    coverURL: coverURL,
-                    genres: ["Manhwa", "Manga"],
-                    status: .ongoing
-                ))
+                if seriesMap[slug]?.title == nil || Self.isJunkTitle(seriesMap[slug]?.title) {
+                    let cleanInner = inner.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                                          .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanInner.isEmpty && cleanInner.count < 80 && !Self.isJunkTitle(cleanInner) {
+                        seriesMap[slug]?.title = cleanInner
+                    }
+                }
             }
         }
         
+        for slug in seriesOrder {
+            guard var cand = seriesMap[slug] else { continue }
+            if cand.title == nil || Self.isJunkTitle(cand.title) {
+                let formatted = formatTitleFromSlug(slug)
+                if !Self.isJunkTitle(formatted) {
+                    cand.title = formatted
+                }
+            }
+            guard let title = cand.title, !Self.isJunkTitle(title) else { continue }
+            guard let coverURL = cand.coverURL, coverURL.absoluteString.hasPrefix("http") else { continue }
+            guard !seenSlugs.contains(slug) else { continue }
+            seenSlugs.insert(slug)
+            
+            results.append(MangaItem(
+                sourceID: manifest.id,
+                urlOrSlug: slug,
+                title: Self.unescapeHTML(title),
+                coverURL: coverURL,
+                genres: ["Manhwa", "Manga"],
+                status: .ongoing,
+                latestChapterTitle: cand.latestChapterTitle
+            ))
+        }
+        
         return results
+    }
+
+    private func extractAllRegex(pattern: String, in text: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        let ns = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        return matches.compactMap { m in
+            let r = m.numberOfRanges > 1 ? m.range(at: 1) : m.range(at: 0)
+            guard r.location != NSNotFound else { return nil }
+            return ns.substring(with: r)
+        }
     }
     
     private func sanitizeSlug(from link: String) -> String {

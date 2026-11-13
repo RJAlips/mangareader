@@ -363,8 +363,8 @@ public final class DatabaseManager: ObservableObject {
         }
 
         // 2. Update Manga in memory with reactive timestamp and chapter link
+        let now = Date()
         if let mIdx = mangaList.firstIndex(where: { $0.id == manga.id }) {
-            let now = Date()
             mangaList[mIdx].lastReadAt = now
             mangaList[mIdx].lastReadDate = now
             mangaList[mIdx].lastReadChapterID = chapter.id
@@ -372,6 +372,19 @@ public final class DatabaseManager: ObservableObject {
             mangaList[mIdx].lastReadChapterTitle = chapter.displayTitle
             mangaList[mIdx].lastReadPage = pageIndex
             mangaList[mIdx].totalPages = max(chapter.pageCount, 1)
+            if mangaList[mIdx].urlOrSlug.isEmpty && !manga.urlOrSlug.isEmpty {
+                mangaList[mIdx].urlOrSlug = manga.urlOrSlug
+            }
+        } else {
+            var newManga = manga
+            newManga.lastReadAt = now
+            newManga.lastReadDate = now
+            newManga.lastReadChapterID = chapter.id
+            newManga.lastReadChapterNumber = chapter.chapterNumber
+            newManga.lastReadChapterTitle = chapter.displayTitle
+            newManga.lastReadPage = pageIndex
+            newManga.totalPages = max(chapter.pageCount, 1)
+            mangaList.append(newManga)
         }
 
         // 3. Update Progress History
@@ -385,7 +398,13 @@ public final class DatabaseManager: ObservableObject {
             mangaID: manga.id,
             pageIndex: pageIndex,
             totalPages: max(chapter.pageCount, 1),
-            readingTimeSeconds: totalDuration
+            readingTimeSeconds: totalDuration,
+            mangaTitle: manga.title,
+            chapterTitle: chapter.displayTitle,
+            chapterNumber: chapter.chapterNumber,
+            coverURL: manga.coverURL,
+            sourceID: manga.sourceID,
+            urlOrSlug: manga.urlOrSlug
         )
         if let idx = historyList.firstIndex(where: { $0.chapterID == chapter.id }) {
             historyList[idx] = progress

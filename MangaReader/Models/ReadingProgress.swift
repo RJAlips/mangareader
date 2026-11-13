@@ -36,6 +36,11 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
     public var chapterNumber: Double?
     public var coverURL: URL?
     public var sourceID: String?
+    public var urlOrSlug: String?
+    public var mangaSlug: String? {
+        get { urlOrSlug }
+        set { urlOrSlug = newValue }
+    }
     
     public init(
         chapterID: UUID,
@@ -48,7 +53,8 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
         chapterTitle: String? = nil,
         chapterNumber: Double? = nil,
         coverURL: URL? = nil,
-        sourceID: String? = nil
+        sourceID: String? = nil,
+        urlOrSlug: String? = nil
     ) {
         self.chapterID = chapterID
         self.mangaID = mangaID
@@ -61,6 +67,7 @@ public struct ReadingProgress: Codable, Hashable, Identifiable {
         self.chapterNumber = chapterNumber
         self.coverURL = coverURL
         self.sourceID = sourceID
+        self.urlOrSlug = urlOrSlug
     }
     
     public var progressPercent: Double {

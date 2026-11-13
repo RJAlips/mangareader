@@ -30,7 +30,8 @@ public struct AsyncMangaImage: View {
         showShimmer: Bool = true,
         headers: [String: String]? = nil
     ) {
-        self.url = URLResolver.resolve(url?.absoluteString, relativeTo: baseURL)
+        let encodedStr = url?.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+        self.url = URLResolver.resolve(encodedStr ?? url?.absoluteString, relativeTo: baseURL)
         self.baseURL = baseURL
         self.contentMode = contentMode
         self.cornerRadius = cornerRadius
@@ -46,7 +47,8 @@ public struct AsyncMangaImage: View {
         showShimmer: Bool = true,
         headers: [String: String]? = nil
     ) {
-        let resolved = URLResolver.resolve(urlString, relativeTo: baseURL)
+        let encoded = urlString?.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString
+        let resolved = URLResolver.resolve(encoded, relativeTo: baseURL)
         self.init(url: resolved, baseURL: baseURL, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
     }
     
@@ -128,8 +130,17 @@ public struct AsyncMangaImage: View {
             Task { await ImageDownloadLimiter.shared.release() }
         }
 
+        var reqHeaders = customHeaders ?? [:]
+        if reqHeaders["User-Agent"] == nil {
+            reqHeaders["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+        }
+        let referer = baseURL?.absoluteString ?? (url.scheme != nil && url.host != nil ? "\(url.scheme!)://\(url.host!)/" : nil)
+        if reqHeaders["Referer"] == nil, let ref = referer {
+            reqHeaders["Referer"] = ref.hasSuffix("/") ? ref : "\(ref)/"
+        }
+
         do {
-            let data = try await NetworkClient.shared.fetchDataWithCDNHeaders(from: url, headers: customHeaders)
+            let data = try await NetworkClient.shared.fetchDataWithCDNHeaders(from: url, headers: reqHeaders, refererOverride: referer)
             guard let image = UIImage(data: data) else {
                 hasFailed = true
                 isLoading = false

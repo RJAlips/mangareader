@@ -223,7 +223,7 @@ public struct MangaDetailView: View {
                     Button {
                         showSafariSheet = true
                     } label: {
-                        Text(cleanSourceIDDisplay)
+                        Text(sourceName)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.mangaAccent)
                             .lineLimit(1)
@@ -254,13 +254,17 @@ public struct MangaDetailView: View {
     private var cleanSourceIDDisplay: String {
         let raw = viewModel.manga.sourceID
         let clean = raw
+            .replacingOccurrences(of: "com.rjalips.mangareader.source.", with: "")
             .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
             .replacingOccurrences(of: "com.mangareader.source.", with: "")
         return clean.isEmpty ? "source" : clean
     }
     
     private var sourceName: String {
-        SourceManager.shared.getSource(id: viewModel.manga.sourceID)?.manifest.name ?? cleanSourceIDDisplay.capitalized
+        if let src = SourceManager.shared.getSource(id: viewModel.manga.sourceID) {
+            return src.manifest.name
+        }
+        return cleanSourceIDDisplay.capitalized
     }
     
     // MARK: - 2. Action Bar (Add to Library | Tracking | Web View)
@@ -372,8 +376,38 @@ public struct MangaDetailView: View {
     
     // MARK: - 4. Prominent Periwinkle Continue Reading Button
     
+    private var historyEntry: ReadingProgress? {
+        HistoryRepository.shared.historyItems.first(where: { $0.mangaID == viewModel.manga.id })
+    }
+    
     private var continueReadingButton: some View {
         Button {
+            if let hist = historyEntry {
+                if let matched = viewModel.chapters.first(where: { $0.id == hist.chapterId }) {
+                    var ch = matched
+                    ch.lastPageRead = hist.lastPageRead
+                    selectedChapterForReading = ch
+                    return
+                }
+                if let dbCh = DatabaseManager.shared.chaptersList.first(where: { $0.id == hist.chapterId }) {
+                    var ch = dbCh
+                    ch.lastPageRead = hist.lastPageRead
+                    selectedChapterForReading = ch
+                    return
+                }
+                let fallback = ChapterItem(
+                    id: hist.chapterId,
+                    mangaID: viewModel.manga.id,
+                    sourceChapterID: hist.chapterTitle ?? "1",
+                    chapterNumber: hist.chapterNumber ?? 1.0,
+                    title: hist.chapterTitle,
+                    pageCount: hist.pageCount,
+                    lastPageRead: hist.lastPageRead
+                )
+                selectedChapterForReading = fallback
+                return
+            }
+            
             if let nextCh = viewModel.nextChapterToRead {
                 selectedChapterForReading = nextCh
             } else if let firstCh = viewModel.chapters.first {
@@ -397,6 +431,10 @@ public struct MangaDetailView: View {
     }
     
     private var continueReadingTitle: String {
+        if let hist = historyEntry {
+            let title = hist.chapterTitle ?? hist.displayChapterTitle
+            return "Continue reading \(title)"
+        }
         if let nextCh = viewModel.nextChapterToRead {
             return "Continue reading \(nextCh.displayTitle)"
         } else if let firstCh = viewModel.chapters.first {
@@ -462,7 +500,7 @@ public struct MangaDetailView: View {
                     .foregroundColor(.textTertiary)
                 
                 Button("Refresh") {
-                    viewModel.loadChapters()
+                    viewModel.refreshChapters()
                 }
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.mangaAccent)
@@ -477,7 +515,7 @@ public struct MangaDetailView: View {
     
     private var chaptersListSection: some View {
         LazyVStack(spacing: 0) {
-            if viewModel.isLoadingChapters {
+            if viewModel.isLoadingChapters && filteredChapters.isEmpty {
                 ProgressView()
                     .padding()
             } else if filteredChapters.isEmpty {
@@ -486,6 +524,18 @@ public struct MangaDetailView: View {
                     .foregroundColor(.textTertiary)
                     .padding(.vertical, 20)
             } else {
+                if viewModel.isLoadingChapters {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Updating chapters...")
+                            .font(.system(size: 11))
+                            .foregroundColor(.textTertiary)
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                }
                 ForEach(filteredChapters) { chapter in
                     ChapterRowView(
                         chapter: chapter,

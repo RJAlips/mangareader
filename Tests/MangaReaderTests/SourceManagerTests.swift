@@ -861,6 +861,70 @@ final class EndToEndFunctionalTests: XCTestCase {
         
         try? FileManager.default.removeItem(at: backupURL)
     }
+
+    func testExtensionHTMLParserRejectsJunkAndExtractsCovers() {
+        let sampleHTML = """
+        <a href="/manga/?type=manhua">MANHUA</a>
+        <a href="/manga/#Aqua-Latest-Section">#Aqua Latest Section</a>
+        <a href="/manga/solo-leveling/"><img data-src="https://example.com/cover.jpg"></a>
+        <a href="/manga/solo-leveling/">Solo Leveling</a>
+        <a href="/manga/solo-leveling/chapter-10/">Ch. 10</a>
+        """
+        let manifest = SourceManifest(
+            id: "com.mangareader.source.test",
+            name: "Test",
+            version: "1.0.0",
+            versionCode: 1,
+            lang: "EN",
+            baseURL: "https://example.com",
+            isEnabled: true
+        )
+        let source = DynamicRepositorySource(manifest: manifest, baseURLString: "https://example.com")
+        let items = source.parseTitles(from: sampleHTML)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.title, "Solo Leveling")
+        XCTAssertEqual(items.first?.coverURL?.absoluteString, "https://example.com/cover.jpg")
+        XCTAssertEqual(items.first?.latestChapterTitle, "Ch. 10")
+        XCTAssertFalse(items.contains { $0.title == "MANHUA" })
+        XCTAssertFalse(items.contains { $0.title == "Ch." })
+        XCTAssertFalse(items.contains { $0.title.hasPrefix("#") })
+    }
+
+    @MainActor
+    func testHistoryToMangaDetailPreservesChapters() async throws {
+        let mangaID = UUID()
+        let chapterID = UUID()
+        let manga = MangaItem(
+            id: mangaID,
+            sourceID: "com.mangareader.source.mangadex",
+            urlOrSlug: "356de811-ae92-48f1-b93b-cfdf0f8d02e4",
+            title: "Now That We Draw",
+            coverURL: URL(string: "https://example.com/cover.jpg")
+        )
+        DatabaseManager.shared.upsertManga(manga)
+        
+        let resolved = SourceManager.shared.getSource(id: "com.mangareader.source.mangadex")
+        XCTAssertNotNil(resolved, "SourceManager must resolve provider for com.mangareader.source.mangadex")
+        
+        let progress = ReadingProgress(
+            chapterID: chapterID,
+            mangaID: mangaID,
+            lastPageRead: 2,
+            pageCount: 30,
+            readingDurationSeconds: 120,
+            mangaTitle: "Now That We Draw",
+            chapterTitle: "Chapter 2",
+            chapterNumber: 2.0,
+            coverURL: manga.coverURL,
+            sourceID: "mangadex",
+            urlOrSlug: manga.urlOrSlug
+        )
+        HistoryRepository.shared.recordReadingProgress(progress)
+        
+        let vm = MangaDetailViewModel(manga: manga)
+        XCTAssertEqual(vm.manga.title, "Now That We Draw")
+        XCTAssertFalse(vm.manga.sourceID.isEmpty)
+    }
 }
 
 private struct CommunityRepoIndexDTO: Decodable {

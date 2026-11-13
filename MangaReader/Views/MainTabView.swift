@@ -366,18 +366,23 @@ public struct HistoryView: View {
     private func getManga(for progress: ReadingProgress) -> MangaItem {
         let rawSource = progress.sourceID ?? ""
         let cleanSource = rawSource
+            .replacingOccurrences(of: "com.rjalips.mangareader.source.", with: "")
             .replacingOccurrences(of: "com.mangareader.source.community.", with: "")
             .replacingOccurrences(of: "com.mangareader.source.", with: "")
         let finalSource = cleanSource.isEmpty ? "mangadex" : cleanSource
         
+        let slug = progress.urlOrSlug ?? ""
         if var found = DatabaseManager.shared.mangaList.first(where: { $0.id == progress.mangaID }) {
             found.sourceID = finalSource
+            if found.urlOrSlug.isEmpty && !slug.isEmpty {
+                found.urlOrSlug = slug
+            }
             return found
         }
         return MangaItem(
             id: progress.mangaID,
             sourceID: finalSource,
-            urlOrSlug: "",
+            urlOrSlug: slug,
             title: progress.displayMangaTitle,
             coverURL: progress.coverURL
         )
