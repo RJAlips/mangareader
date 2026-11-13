@@ -906,20 +906,18 @@ final class EndToEndFunctionalTests: XCTestCase {
         let resolved = SourceManager.shared.getSource(id: "com.mangareader.source.mangadex")
         XCTAssertNotNil(resolved, "SourceManager must resolve provider for com.mangareader.source.mangadex")
         
-        let progress = ReadingProgress(
-            chapterID: chapterID,
+        HistoryRepository.shared.recordReadingProgress(
             mangaID: mangaID,
-            lastPageRead: 2,
-            pageCount: 30,
-            readingDurationSeconds: 120,
+            chapterID: chapterID,
+            page: 2,
+            totalPages: 30,
+            sourceID: "mangadex",
             mangaTitle: "Now That We Draw",
             chapterTitle: "Chapter 2",
             chapterNumber: 2.0,
             coverURL: manga.coverURL,
-            sourceID: "mangadex",
             urlOrSlug: manga.urlOrSlug
         )
-        HistoryRepository.shared.recordReadingProgress(progress)
         
         let vm = MangaDetailViewModel(manga: manga)
         XCTAssertEqual(vm.manga.title, "Now That We Draw")
