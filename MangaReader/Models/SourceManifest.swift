@@ -21,6 +21,10 @@ public struct SourceManifest: Identifiable, Codable, Hashable, Equatable {
     public var supportsLatest: Bool
     public var supportsSearch: Bool
     public var sourceDescription: String?
+    public var popularURL: String?
+    public var latestURL: String?
+    public var searchURL: String?
+    public var chaptersURL: String?
     
     public init(
         id: String,
@@ -35,7 +39,11 @@ public struct SourceManifest: Identifiable, Codable, Hashable, Equatable {
         isNsfw: Bool = false,
         supportsLatest: Bool = true,
         supportsSearch: Bool = true,
-        sourceDescription: String? = nil
+        sourceDescription: String? = nil,
+        popularURL: String? = nil,
+        latestURL: String? = nil,
+        searchURL: String? = nil,
+        chaptersURL: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -50,6 +58,10 @@ public struct SourceManifest: Identifiable, Codable, Hashable, Equatable {
         self.supportsLatest = supportsLatest
         self.supportsSearch = supportsSearch
         self.sourceDescription = sourceDescription
+        self.popularURL = popularURL
+        self.latestURL = latestURL
+        self.searchURL = searchURL
+        self.chaptersURL = chaptersURL
     }
     
     enum CodingKeys: String, CodingKey {
@@ -72,6 +84,10 @@ public struct SourceManifest: Identifiable, Codable, Hashable, Equatable {
         case supportsSearch
         case sourceDescription
         case description
+        case popularURL
+        case latestURL
+        case searchURL
+        case chaptersURL
     }
     
     public init(from decoder: Decoder) throws {
@@ -153,6 +169,11 @@ public struct SourceManifest: Identifiable, Codable, Hashable, Equatable {
         } else {
             self.sourceDescription = nil
         }
+        
+        self.popularURL = try? container.decodeIfPresent(String.self, forKey: .popularURL)
+        self.latestURL = try? container.decodeIfPresent(String.self, forKey: .latestURL)
+        self.searchURL = try? container.decodeIfPresent(String.self, forKey: .searchURL)
+        self.chaptersURL = try? container.decodeIfPresent(String.self, forKey: .chaptersURL)
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -170,5 +191,9 @@ public struct SourceManifest: Identifiable, Codable, Hashable, Equatable {
         try container.encode(supportsLatest, forKey: .supportsLatest)
         try container.encode(supportsSearch, forKey: .supportsSearch)
         try container.encodeIfPresent(sourceDescription, forKey: .sourceDescription)
+        try container.encodeIfPresent(popularURL, forKey: .popularURL)
+        try container.encodeIfPresent(latestURL, forKey: .latestURL)
+        try container.encodeIfPresent(searchURL, forKey: .searchURL)
+        try container.encodeIfPresent(chaptersURL, forKey: .chaptersURL)
     }
 }
