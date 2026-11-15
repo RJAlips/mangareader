@@ -49,7 +49,9 @@ public enum URLResolver {
             return nil
         }
 
-        let cleanString = string.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? string
+        // Encode only if the raw string is not already a parseable URL (prevents %25 double-encoding).
+        let cleanString = URL(string: string) != nil
+            ? string : (string.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? string)
 
         // Already an absolute URL with a scheme — use as-is.
         if let url = URL(string: cleanString), url.scheme != nil, url.host != nil {
@@ -179,9 +181,9 @@ public actor NetworkClient {
             }
         }
 
-        // Accept — ensure modern formats (AVIF, WebP) and all image types are accepted
+        // Accept — ensure standard and modern formats (WebP, PNG, JPEG) are accepted
         if requestHeaders["Accept"] == nil {
-            requestHeaders["Accept"] = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+            requestHeaders["Accept"] = "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8"
         }
 
         return try await fetchData(from: url, headers: requestHeaders, timeoutInterval: timeoutInterval)

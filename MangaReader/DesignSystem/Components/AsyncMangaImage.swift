@@ -30,8 +30,12 @@ public struct AsyncMangaImage: View {
         showShimmer: Bool = true,
         headers: [String: String]? = nil
     ) {
-        let encodedStr = url?.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
-        self.url = URLResolver.resolve(encodedStr ?? url?.absoluteString, relativeTo: baseURL)
+        // Keep valid URLs as-is; only resolve relative URLs
+        if let url = url, (url.host != nil || url.isFileURL || url.scheme == "file") {
+            self.url = url
+        } else {
+            self.url = URLResolver.resolve(url?.absoluteString, relativeTo: baseURL)
+        }
         self.baseURL = baseURL
         self.contentMode = contentMode
         self.cornerRadius = cornerRadius
@@ -47,8 +51,7 @@ public struct AsyncMangaImage: View {
         showShimmer: Bool = true,
         headers: [String: String]? = nil
     ) {
-        let encoded = urlString?.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? urlString
-        let resolved = URLResolver.resolve(encoded, relativeTo: baseURL)
+        let resolved = URLResolver.resolve(urlString, relativeTo: baseURL)
         self.init(url: resolved, baseURL: baseURL, contentMode: contentMode, cornerRadius: cornerRadius, showShimmer: showShimmer, headers: headers)
     }
     
@@ -107,9 +110,9 @@ public struct AsyncMangaImage: View {
         
         // 1. Check local file if file:// scheme or local path (local-first rendering)
         let urlStr = url.absoluteString
-        if url.isFileURL || url.scheme == "file" || urlStr.hasPrefix("file://") || urlStr.hasPrefix("/") || url.path.contains("Downloads/") {
+        if url.isFileURL || url.scheme == "file" || urlStr.hasPrefix("file://") || (url.scheme == nil && urlStr.hasPrefix("/")) {
             let path = url.isFileURL ? url.path : (urlStr.hasPrefix("file://") ? String(urlStr.dropFirst(7)) : urlStr)
-            if let img = UIImage(contentsOfFile: path) ?? (try? Data(contentsOf: url)).flatMap({ UIImage(data: $0) }) {
+            if let img = UIImage(contentsOfFile: path) {
                 self.loadedImage = img
                 return
             }
@@ -164,7 +167,7 @@ public struct AsyncMangaImage: View {
                 ].compactMap { $0 }.filter { $0 != url }
                 
                 for fallbackURL in candidateURLs {
-                    if let data = try? await NetworkClient.shared.fetchDataWithCDNHeaders(from: fallbackURL, headers: customHeaders),
+                    if let data = try? await NetworkClient.shared.fetchDataWithCDNHeaders(from: fallbackURL, headers: reqHeaders, refererOverride: referer),
                        let image = UIImage(data: data) {
                         await ImageCacheManager.shared.insert(image, for: url, data: data)
                         self.loadedImage = image
@@ -175,6 +178,9 @@ public struct AsyncMangaImage: View {
             }
             
             if !Task.isCancelled {
+                #if DEBUG
+                print("[AsyncMangaImage] FAILED \(url.absoluteString) referer=\(reqHeaders["Referer"] ?? "-") error=\(error)")
+                #endif
                 self.hasFailed = true
                 self.isLoading = false
             }

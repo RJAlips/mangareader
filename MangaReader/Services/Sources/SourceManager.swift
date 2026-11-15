@@ -92,20 +92,20 @@ public final class SourceManager: ObservableObject {
             manifest: SourceManifest(
                 id: "com.mangareader.source.asurascans",
                 name: "Asura Scans",
-                version: "1.4.1",
-                versionCode: 141,
+                version: "1.4.2",
+                versionCode: 142,
                 lang: "EN",
-                baseURL: "https://asuracomic.net",
-                iconURL: URL(string: "https://asuracomic.net/favicon.ico"),
+                baseURL: "https://asurascans.com",
+                iconURL: URL(string: "https://asurascans.com/images/logo.webp"),
                 isEnabled: true,
                 supportsLatest: true,
                 supportsSearch: true,
                 sourceDescription: "High quality action manhwa & webtoons translation group"
             ),
-            baseURLString: "https://asuracomic.net",
-            popularURL: "https://asuracomic.net/series?page=1",
-            latestURL: "https://asuracomic.net/series?page=1",
-            searchURL: "https://asuracomic.net/series?page=1&name={query}"
+            baseURLString: "https://asurascans.com",
+            popularURL: "https://asurascans.com/browse",
+            latestURL: "https://asurascans.com/browse",
+            searchURL: "https://asurascans.com/browse?search={query}"
         )
         
         let asq = CommunityWebSource(
@@ -392,7 +392,14 @@ public final class SourceManager: ObservableObject {
             return 1
         }
         
-        guard let url = URL(string: cleanURLString) else { throw NetworkError.invalidURL }
+        // index.pb is protobuf; Keiyoushi publishes index.min.json alongside it.
+        let fetchURLString: String
+        if cleanURLString.hasSuffix("/index.pb") || cleanURLString.hasSuffix("index.pb") {
+            fetchURLString = String(cleanURLString.dropLast("index.pb".count)) + "index.min.json"
+        } else {
+            fetchURLString = cleanURLString
+        }
+        guard let url = URL(string: fetchURLString) else { throw NetworkError.invalidURL }
         let data = try await NetworkClient.shared.fetchData(from: url)
         
         let parsed = parseManifestsFromData(data, repoURL: url)
@@ -634,7 +641,7 @@ public final class SourceManager: ObservableObject {
         let baseRepoURL: URL
         if cleanURLString.contains("aidoku") {
             baseRepoURL = aidokuBaseURL
-        } else if cleanURLString.hasSuffix(".json") {
+        } else if cleanURLString.hasSuffix(".json") || cleanURLString.hasSuffix(".pb") {
             var str = repoURL.deletingLastPathComponent().absoluteString
             if !str.hasSuffix("/") { str += "/" }
             baseRepoURL = URL(string: str) ?? repoURL
@@ -652,7 +659,7 @@ public final class SourceManager: ObservableObject {
                 let packageVer = pkg.version ?? "1.0.0"
                 let packageCode = pkg.code ?? 1
                 let isNsfw = (pkg.nsfw ?? 0) > 0
-                let iconURL = URL(string: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/icon/\(pkg.pkg).png")
+                let iconURL = URL(string: "icon/\(pkg.pkg).png", relativeTo: baseRepoURL)?.absoluteURL
                 
                 if let pkgSources = pkg.sources, !pkgSources.isEmpty {
                     for src in pkgSources {

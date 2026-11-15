@@ -923,6 +923,23 @@ final class EndToEndFunctionalTests: XCTestCase {
         XCTAssertEqual(vm.manga.title, "Now That We Draw")
         XCTAssertFalse(vm.manga.sourceID.isEmpty)
     }
+
+    func testURLResolverPreservesEncodedCharactersAndResolvesRelativeURLs() {
+        // 1. Should not double-encode already-encoded URL
+        let encodedURLStr = "https://example.com/path/cover%20image.jpg"
+        let resolvedEncoded = URLResolver.resolve(encodedURLStr, relativeTo: nil)
+        XCTAssertEqual(resolvedEncoded?.absoluteString, "https://example.com/path/cover%20image.jpg")
+        XCTAssertFalse(resolvedEncoded?.absoluteString.contains("%2520") ?? true, "Must not double-encode %20 to %2520")
+
+        // 2. Should resolve relative paths against baseURL
+        let baseURL = URL(string: "https://example.com/series/test")!
+        let relativeURL = URLResolver.resolve("/images/cover.jpg", relativeTo: baseURL)
+        XCTAssertEqual(relativeURL?.absoluteString, "https://example.com/images/cover.jpg")
+
+        // 3. Should resolve scheme-relative URLs
+        let schemeRelative = URLResolver.resolve("//cdn.example.com/test.png", relativeTo: baseURL)
+        XCTAssertEqual(schemeRelative?.absoluteString, "https://cdn.example.com/test.png")
+    }
 }
 
 private struct CommunityRepoIndexDTO: Decodable {
