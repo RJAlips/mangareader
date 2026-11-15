@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import Observation
 import WebKit
 
 public enum MangaReaderError: LocalizedError {
@@ -46,6 +47,11 @@ public final class SourceManager: ObservableObject {
     @Published public private(set) var pendingUpdates: [SourceManifest] = []
     @Published public private(set) var availableManifests: [SourceManifest] = []
     @Published public private(set) var isRefreshingRepos: Bool = false
+    @Published public private(set) var keiyoushiSources: [ExtensionSourceItem] = []
+    @Published public private(set) var isCheckingHealth: Bool = false
+    @Published public private(set) var checkedCount: Int = 0
+    
+    public let repoService = KeiyoushiRepoService()
     
     public var activeSources: [any MangaSource] {
         return sources.filter { isSourceEnabled($0.manifest.id) }
@@ -62,125 +68,40 @@ public final class SourceManager: ObservableObject {
     }
     
     private init() {
-        // 1. Built-in default native providers
-        let demo = DemoMangaSource()
         let mangadex = MangaDexSource()
         let komga = KomgaSource()
         
-        // 2. Built-in Community Web Sources
-        let aqua = CommunityWebSource(
-            manifest: SourceManifest(
-                id: "com.mangareader.source.aquamanga",
-                name: "Aqua Manga",
-                version: "1.3.0",
-                versionCode: 130,
-                lang: "EN",
-                baseURL: "https://aquareader.org",
-                iconURL: URL(string: "https://aquareader.org/favicon.ico"),
-                isEnabled: true,
-                supportsLatest: true,
-                supportsSearch: true,
-                sourceDescription: "Popular manhwa, manhua and manga titles from Aqua Manga"
-            ),
-            baseURLString: "https://aquareader.org",
-            popularURL: "https://aquareader.org/",
-            latestURL: "https://aquareader.org/manga/?m_orderby=latest",
-            searchURL: "https://aquareader.org/?s={query}&post_type=wp-manga"
-        )
+        self.sources = [mangadex, komga]
         
-        let asura = CommunityWebSource(
-            manifest: SourceManifest(
-                id: "com.mangareader.source.asurascans",
-                name: "Asura Scans",
-                version: "1.4.2",
-                versionCode: 142,
-                lang: "EN",
-                baseURL: "https://asurascans.com",
-                iconURL: URL(string: "https://asurascans.com/images/logo.webp"),
-                isEnabled: true,
-                supportsLatest: true,
-                supportsSearch: true,
-                sourceDescription: "High quality action manhwa & webtoons translation group"
-            ),
-            baseURLString: "https://asurascans.com",
-            popularURL: "https://asurascans.com/browse",
-            latestURL: "https://asurascans.com/browse",
-            searchURL: "https://asurascans.com/browse?search={query}"
-        )
-        
-        let asq = CommunityWebSource(
-            manifest: SourceManifest(
-                id: "com.mangareader.source.3asq",
-                name: "3asq",
-                version: "1.2.0",
-                versionCode: 120,
-                lang: "AR",
-                baseURL: "https://3asq.online",
-                iconURL: URL(string: "https://3asq.online/favicon.ico"),
-                isEnabled: true,
-                supportsLatest: true,
-                supportsSearch: true,
-                sourceDescription: "Leading Arabic manga and webtoon translation community"
-            ),
-            baseURLString: "https://3asq.online",
-            popularURL: "https://3asq.online/",
-            latestURL: "https://3asq.online/",
-            searchURL: "https://3asq.online/?s={query}&post_type=wp-manga"
-        )
-        
-        let armageddon = CommunityWebSource(
-            manifest: SourceManifest(
-                id: "com.mangareader.source.armageddon",
-                name: "Flame Comics",
-                version: "1.1.0",
-                versionCode: 110,
-                lang: "EN",
-                baseURL: "https://flamecomics.xyz",
-                iconURL: URL(string: "https://flamecomics.xyz/favicon.ico"),
-                isEnabled: true,
-                supportsLatest: true,
-                supportsSearch: true,
-                sourceDescription: "Curated martial arts, cultivation and fantasy manhwa scans from Flame Comics"
-            ),
-            baseURLString: "https://flamecomics.xyz",
-            popularURL: "https://flamecomics.xyz/",
-            latestURL: "https://flamecomics.xyz/",
-            searchURL: "https://flamecomics.xyz/browse?q={query}"
-        )
-        
-        self.sources = [demo, mangadex, komga, aqua, asura, asq, armageddon]
-        
-        // 3. Load installed manifests from disk or seed defaults
         loadInstalledManifests(defaultSources: self.sources)
         
-        // 4. Load enabled sources
         if let saved = UserDefaults.standard.stringArray(forKey: userDefaultsKey) {
             self.enabledSourceIDs = Set(saved)
-            // Ensure core community sources are active
-            self.enabledSourceIDs.insert(aqua.manifest.id)
-            self.enabledSourceIDs.insert(asura.manifest.id)
-            self.enabledSourceIDs.insert(asq.manifest.id)
-            self.enabledSourceIDs.insert(armageddon.manifest.id)
             self.enabledSourceIDs.insert(mangadex.manifest.id)
-            self.enabledSourceIDs.insert(demo.manifest.id)
+            self.enabledSourceIDs.insert(komga.manifest.id)
         } else {
-            self.enabledSourceIDs = [demo.manifest.id, mangadex.manifest.id, aqua.manifest.id, asura.manifest.id, asq.manifest.id, armageddon.manifest.id]
+            self.enabledSourceIDs = [mangadex.manifest.id, komga.manifest.id]
             saveEnabledSources()
         }
         
-        // 5. Load repositories
         if let repoData = UserDefaults.standard.data(forKey: repoDefaultsKey),
            let savedRepos = try? JSONDecoder().decode([RepositoryInfo].self, from: repoData) {
             self.repositories = savedRepos
         } else {
             self.repositories = [
-                RepositoryInfo(name: "Official MangaDex", url: "https://api.mangadex.org", sourceCount: 1),
-                RepositoryInfo(name: "Open Community Manga Index", url: "https://raw.githubusercontent.com/RJAlips/mangareader/main/community_repo.json", sourceCount: 5)
+                RepositoryInfo(
+                    name: "Keiyoushi Extensions",
+                    url: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb",
+                    sourceCount: 0
+                )
             ]
         }
         
-        // Ensure default repo URLs are recorded
         ensureDefaultRepoURLs()
+        
+        Task { @MainActor [weak self] in
+            await self?.refreshRepositories(force: true)
+        }
     }
     
     // MARK: - Source Registration & Fallback Resolution
@@ -336,8 +257,7 @@ public final class SourceManager: ObservableObject {
     private func ensureDefaultRepoURLs() {
         var current = UserDefaults.standard.stringArray(forKey: savedReposKey) ?? []
         let defaults = [
-            "https://raw.githubusercontent.com/RJAlips/mangareader/main/community_repo.json",
-            "https://aidoku-community.github.io/sources/index.min.json"
+            "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb"
         ]
         var updated = false
         for def in defaults {
@@ -359,6 +279,65 @@ public final class SourceManager: ObservableObject {
         }
     }
     
+    private static func isKeiyoushiRepoURL(_ urlString: String) -> Bool {
+        let lower = urlString.lowercased()
+        return !lower.contains("aidoku") && (
+            lower.contains("keiyoushi") ||
+            lower.hasSuffix("index.pb") ||
+            lower.hasSuffix("index.min.json")
+        )
+    }
+    
+    @MainActor
+    private func syncKeiyoushiSources(repoURL: String) -> [SourceManifest] {
+        let items = repoService.allSources
+        self.keiyoushiSources = items
+        
+        var manifests: [SourceManifest] = []
+        manifests.reserveCapacity(items.count)
+        
+        var existingSourceIDs = Set(sources.map { $0.manifest.id })
+        var newSources: [any MangaSource] = []
+        
+        for item in items {
+            let manifestID = "tachiyomi.\(item.pkg).\(item.id)"
+            let manifest = SourceManifest(
+                id: manifestID,
+                name: item.name,
+                version: item.version,
+                versionCode: Int(item.version.components(separatedBy: ".").first ?? "1") ?? 1,
+                lang: item.lang.uppercased(),
+                baseURL: item.baseUrl,
+                iconURL: item.iconURL,
+                repoURL: repoURL,
+                isEnabled: true,
+                isNsfw: item.isNsfw,
+                supportsLatest: true,
+                supportsSearch: true,
+                sourceDescription: "\(item.name) (\(item.baseUrl))"
+            )
+            manifests.append(manifest)
+            
+            if !existingSourceIDs.contains(manifestID) {
+                existingSourceIDs.insert(manifestID)
+                newSources.append(CommunityWebSource(manifest: manifest, baseURLString: manifest.baseURL))
+            }
+        }
+        
+        if !newSources.isEmpty {
+            self.sources.append(contentsOf: newSources)
+        }
+        
+        let installedIDs = Set(installedManifests.map { $0.id })
+        let availableIDs = Set(availableManifests.map { $0.id })
+        let newAvailable = manifests.filter { !installedIDs.contains($0.id) && !availableIDs.contains($0.id) }
+        if !newAvailable.isEmpty {
+            self.availableManifests.append(contentsOf: newAvailable)
+        }
+        
+        return manifests
+    }
+    
     // MARK: - Repository Management & Live Updates
     
     @MainActor
@@ -370,7 +349,6 @@ public final class SourceManager: ObservableObject {
             cleanURLString = "https://" + cleanURLString
         }
         
-        // 1. MangaDex Special Handling (Instant Success)
         if cleanURLString.lowercased().contains("mangadex") {
             let mangadex = MangaDexSource()
             register(source: mangadex)
@@ -392,14 +370,38 @@ public final class SourceManager: ObservableObject {
             return 1
         }
         
-        // index.pb is protobuf; Keiyoushi publishes index.min.json alongside it.
-        let fetchURLString: String
-        if cleanURLString.hasSuffix("/index.pb") || cleanURLString.hasSuffix("index.pb") {
-            fetchURLString = String(cleanURLString.dropLast("index.pb".count)) + "index.min.json"
-        } else {
-            fetchURLString = cleanURLString
+        if Self.isKeiyoushiRepoURL(cleanURLString) {
+            await repoService.loadRepository(from: cleanURLString)
+            if let errorMessage = repoService.errorMessage {
+                throw NSError(
+                    domain: "RepositoryError",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: errorMessage]
+                )
+            }
+            
+            let manifests = syncKeiyoushiSources(repoURL: cleanURLString)
+            guard !manifests.isEmpty else {
+                throw NSError(
+                    domain: "RepositoryError",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid repository format. Please check the URL and format."]
+                )
+            }
+            
+            if let idx = repositories.firstIndex(where: { $0.url == cleanURLString }) {
+                repositories[idx].sourceCount = manifests.count
+            } else {
+                repositories.append(RepositoryInfo(name: "Keiyoushi Extensions", url: cleanURLString, sourceCount: manifests.count))
+            }
+            
+            saveRepositories()
+            saveInstalledManifests()
+            saveRepoURL(cleanURLString)
+            return manifests.count
         }
-        guard let url = URL(string: fetchURLString) else { throw NetworkError.invalidURL }
+        
+        guard let url = URL(string: cleanURLString) else { throw NetworkError.invalidURL }
         let data = try await NetworkClient.shared.fetchData(from: url)
         
         let parsed = parseManifestsFromData(data, repoURL: url)
@@ -466,7 +468,6 @@ public final class SourceManager: ObservableObject {
             saveRepoURL(cleanURLString)
             return 1
         } else if let htmlStr = String(data: data, encoding: .utf8), (htmlStr.lowercased().contains("<html") || htmlStr.lowercased().contains("<!doctype")) {
-            // Direct website URL fallback
             let hostClean = (url.host ?? "Website").replacingOccurrences(of: "www.", with: "").capitalized
             let siteSourceId = "com.mangareader.source.\(abs(cleanURLString.hashValue))"
             let webManifest = SourceManifest(
@@ -524,7 +525,6 @@ public final class SourceManager: ObservableObject {
     @MainActor
     public func refreshRepositories(force: Bool = false) async {
         if !force, let last = lastRepoRefreshDate, Date().timeIntervalSince(last) < 21600 {
-            // Under 6 hours since last update check
             return
         }
         
@@ -539,37 +539,54 @@ public final class SourceManager: ObservableObject {
             }
         }
         
+        let installedByID = Dictionary(
+            installedManifests.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var seenUpdates = Set<String>()
+        var seenAvailable = Set<String>()
         var discoveredUpdates: [SourceManifest] = []
         var discoveredAvailable: [SourceManifest] = []
         
         for urlString in repoURLs {
             guard let url = URL(string: urlString) else { continue }
-            // Skip MangaDex API root since it is a REST endpoint, not a JSON index
             if urlString.contains("api.mangadex.org") { continue }
             
-            var request = URLRequest(url: url)
-            request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-            request.timeoutInterval = 20
-            
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                continue
+            let manifests: [SourceManifest]
+            if Self.isKeiyoushiRepoURL(urlString) {
+                await repoService.loadRepository(from: urlString)
+                manifests = syncKeiyoushiSources(repoURL: urlString)
+                if !manifests.isEmpty {
+                    if let idx = repositories.firstIndex(where: { $0.url == urlString }) {
+                        repositories[idx].sourceCount = manifests.count
+                    } else {
+                        repositories.append(RepositoryInfo(name: "Keiyoushi Extensions", url: urlString, sourceCount: manifests.count))
+                    }
+                    saveRepositories()
+                }
+            } else {
+                var request = URLRequest(url: url)
+                request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+                request.timeoutInterval = 20
+                
+                guard let (data, response) = try? await URLSession.shared.data(for: request),
+                      let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    continue
+                }
+                
+                manifests = parseManifestsFromData(data, repoURL: url).manifests
             }
             
-            let parsed = parseManifestsFromData(data, repoURL: url)
-            for remote in parsed.manifests {
-                if let local = installedManifests.first(where: { $0.id == remote.id }) {
-                    // Check if newer version or updated base URL
+            for remote in manifests {
+                if let local = installedByID[remote.id] {
                     if remote.version != local.version || remote.versionCode > local.versionCode || (!remote.baseURL.isEmpty && remote.baseURL != local.baseURL) {
-                        if !discoveredUpdates.contains(where: { $0.id == remote.id }) {
+                        if seenUpdates.insert(remote.id).inserted {
                             discoveredUpdates.append(remote)
                         }
                     }
-                } else {
-                    if !discoveredAvailable.contains(where: { $0.id == remote.id }) {
-                        discoveredAvailable.append(remote)
-                    }
+                } else if seenAvailable.insert(remote.id).inserted {
+                    discoveredAvailable.append(remote)
                 }
             }
         }
@@ -587,7 +604,6 @@ public final class SourceManager: ObservableObject {
             installedManifests.append(remoteManifest)
         }
         
-        // Update active provider in sources
         sources.removeAll(where: { $0.manifest.id == remoteManifest.id })
         let updatedSource = CommunityWebSource(
             manifest: remoteManifest,
@@ -630,7 +646,7 @@ public final class SourceManager: ObservableObject {
         saveEnabledSources()
     }
     
-    // MARK: - Manifest Parser Supporting Tachiyomi, Aidoku, Community Repo & Feeds
+    // MARK: - Manifest Parser Supporting Aidoku, Community Repo & Feeds
     
     private func parseManifestsFromData(_ data: Data, repoURL: URL) -> (name: String, manifests: [SourceManifest], mangaItems: [MangaItem]?) {
         let decoder = JSONDecoder()
@@ -641,7 +657,7 @@ public final class SourceManager: ObservableObject {
         let baseRepoURL: URL
         if cleanURLString.contains("aidoku") {
             baseRepoURL = aidokuBaseURL
-        } else if cleanURLString.hasSuffix(".json") || cleanURLString.hasSuffix(".pb") {
+        } else if cleanURLString.hasSuffix(".json") {
             var str = repoURL.deletingLastPathComponent().absoluteString
             if !str.hasSuffix("/") { str += "/" }
             baseRepoURL = URL(string: str) ?? repoURL
@@ -651,60 +667,7 @@ public final class SourceManager: ObservableObject {
             baseRepoURL = URL(string: str) ?? repoURL
         }
         
-        // 1. Try Tachiyomi / Keiyoushi package array: [{ name, pkg, apk, code, version, nsfw, sources: [...] }]
-        if let packages = try? decoder.decode([KeiyoushiPackageDTO].self, from: data), !packages.isEmpty {
-            repoName = "Keiyoushi Extensions"
-            var manifests: [SourceManifest] = []
-            for pkg in packages {
-                let packageVer = pkg.version ?? "1.0.0"
-                let packageCode = pkg.code ?? 1
-                let isNsfw = (pkg.nsfw ?? 0) > 0
-                let iconURL = URL(string: "icon/\(pkg.pkg).png", relativeTo: baseRepoURL)?.absoluteURL
-                
-                if let pkgSources = pkg.sources, !pkgSources.isEmpty {
-                    for src in pkgSources {
-                        let manifest = SourceManifest(
-                            id: "tachiyomi.\(pkg.pkg).\(src.id)",
-                            name: src.name.isEmpty ? pkg.name : src.name,
-                            version: packageVer,
-                            versionCode: packageCode,
-                            lang: (src.lang ?? pkg.lang ?? "EN").uppercased(),
-                            baseURL: src.baseUrl,
-                            iconURL: iconURL,
-                            repoURL: cleanURLString,
-                            isEnabled: true,
-                            isNsfw: isNsfw,
-                            supportsLatest: true,
-                            supportsSearch: true,
-                            sourceDescription: "\(pkg.name) Tachiyomi extension (\(src.baseUrl))"
-                        )
-                        manifests.append(manifest)
-                    }
-                } else {
-                    let manifest = SourceManifest(
-                        id: "tachiyomi.\(pkg.pkg)",
-                        name: pkg.name,
-                        version: packageVer,
-                        versionCode: packageCode,
-                        lang: (pkg.lang ?? "EN").uppercased(),
-                        baseURL: "",
-                        iconURL: iconURL,
-                        repoURL: cleanURLString,
-                        isEnabled: true,
-                        isNsfw: isNsfw,
-                        supportsLatest: true,
-                        supportsSearch: true,
-                        sourceDescription: "\(pkg.name) Tachiyomi extension"
-                    )
-                    manifests.append(manifest)
-                }
-            }
-            if !manifests.isEmpty {
-                return (repoName, manifests, nil)
-            }
-        }
-        
-        // 2. Try RepositoryManifestDTO: { name, sources: [RepositorySourceDTO] } (Aidoku & MangaReader)
+        // 1. Try RepositoryManifestDTO: { name, sources: [RepositorySourceDTO] } (Aidoku & MangaReader)
         if let manifestDTO = try? decoder.decode(RepositoryManifestDTO.self, from: data) {
             repoName = manifestDTO.name ?? repoName
             var manifests: [SourceManifest] = []
@@ -909,22 +872,73 @@ public final class SourceManager: ObservableObject {
         }
     }
     
-    public func checkAllInstalledExtensionsHealth() async -> [ExtensionHealthReport] {
-        var reports: [ExtensionHealthReport] = []
-        let currentSources = activeSources
-        
-        await withTaskGroup(of: ExtensionHealthReport.self) { group in
-            for src in currentSources {
-                group.addTask {
-                    await self.checkSourceHealth(source: src)
-                }
-            }
-            for await report in group {
-                reports.append(report)
-            }
+    @MainActor
+    public func checkAllSources(languageFilter: String? = "en", maxConcurrency: Int = 25) async {
+        guard !isCheckingHealth else { return }
+        isCheckingHealth = true
+        checkedCount = 0
+        defer {
+            isCheckingHealth = false
+            checkedCount = repoService.checkedCount
+            keiyoushiSources = repoService.allSources
         }
         
-        return reports.sorted { $0.sourceName < $1.sourceName }
+        if repoService.allSources.isEmpty {
+            let repoURL = repositories.first(where: { Self.isKeiyoushiRepoURL($0.url) })?.url
+                ?? "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb"
+            await repoService.loadRepository(from: repoURL)
+            _ = syncKeiyoushiSources(repoURL: repoURL)
+        }
+        
+        await repoService.checkAllSources(languageFilter: languageFilter, maxConcurrency: maxConcurrency) { [weak self] count in
+            self?.checkedCount = count
+        }
+    }
+    
+    @MainActor
+    public func checkSingleSource(id: String) async {
+        await repoService.checkSingleSource(id: id)
+        keiyoushiSources = repoService.allSources
+    }
+    
+    @MainActor
+    public func checkAllInstalledExtensionsHealth() async -> [ExtensionHealthReport] {
+        await checkAllSources(languageFilter: nil)
+        return repoService.allSources.map { item in
+            let statusLabel: String
+            let httpCode: Int
+            let errMsg: String?
+            switch item.status {
+            case .online(let code):
+                statusLabel = "PASS"
+                httpCode = code
+                errMsg = nil
+            case .cloudflareProtected:
+                statusLabel = "WARN"
+                httpCode = 403
+                errMsg = "Cloudflare Protected"
+            case .offline(let reason):
+                statusLabel = "FAIL"
+                httpCode = 0
+                errMsg = reason
+            case .checking, .unchecked:
+                statusLabel = "WARN"
+                httpCode = 0
+                errMsg = nil
+            }
+            return ExtensionHealthReport(
+                sourceID: item.id,
+                sourceName: item.name,
+                baseURL: item.baseUrl,
+                popularCount: httpCode > 0 ? 1 : 0,
+                coverThumbnailHTTP: httpCode,
+                chaptersCount: 0,
+                pagesCount: 0,
+                status: statusLabel,
+                errorMessage: errMsg
+            )
+        }
+        .sorted { $0.sourceName < $1.sourceName }
     }
     
     private func saveRepositories() {
@@ -2472,43 +2486,267 @@ public final class DynamicJSONSource: MangaSource, @unchecked Sendable {
     }
 }
 
-// MARK: - Tolerant Repository DTOs
+// MARK: - Keiyoushi Repository & Health Check Service
 
-private struct KeiyoushiPackageDTO: Decodable {
-    let name: String
-    let pkg: String
-    let apk: String?
-    let lang: String?
-    let code: Int?
-    let version: String?
-    let nsfw: Int?
-    let sources: [KeiyoushiSourceDTO]?
+public struct KeiyoushiExtensionDTO: Decodable {
+    public let name: String
+    public let pkg: String
+    public let apk: String?
+    public let lang: String?
+    public let code: Int?
+    public let version: String?
+    public let nsfw: Int?
+    public let sources: [KeiyoushiRawSourceDTO]?
 }
 
-private struct KeiyoushiSourceDTO: Decodable {
-    let id: String
-    let name: String
-    let lang: String?
-    let baseUrl: String
-    
+public struct KeiyoushiRawSourceDTO: Decodable {
+    public let name: String
+    public let lang: String
+    public let id: String
+    public let baseUrl: String
+
     enum CodingKeys: String, CodingKey {
-        case id, name, lang, baseUrl
+        case name, lang, id, baseUrl
     }
-    
-    init(from decoder: Decoder) throws {
+
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = (try? container.decode(String.self, forKey: .name)) ?? "Source"
+        self.lang = (try? container.decode(String.self, forKey: .lang)) ?? ""
         if let strId = try? container.decode(String.self, forKey: .id) {
             self.id = strId
+        } else if let int64Id = try? container.decode(Int64.self, forKey: .id) {
+            self.id = "\(int64Id)"
         } else if let intId = try? container.decode(Int.self, forKey: .id) {
             self.id = "\(intId)"
         } else {
             self.id = UUID().uuidString
         }
-        self.name = (try? container.decode(String.self, forKey: .name)) ?? "Source"
-        self.lang = try? container.decode(String.self, forKey: .lang)
         self.baseUrl = (try? container.decode(String.self, forKey: .baseUrl)) ?? ""
     }
 }
+
+public enum SourceHealthStatus: Equatable, Sendable {
+    case unchecked
+    case checking
+    case online(statusCode: Int)
+    case cloudflareProtected
+    case offline(String)
+}
+
+public struct ExtensionSourceItem: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let pkg: String
+    public let lang: String
+    public let baseUrl: String
+    public let version: String
+    public let isNsfw: Bool
+    public let iconURL: URL?
+    public var status: SourceHealthStatus = .unchecked
+
+    public static func == (lhs: ExtensionSourceItem, rhs: ExtensionSourceItem) -> Bool {
+        lhs.id == rhs.id && lhs.status == rhs.status
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
+@MainActor
+@Observable
+public final class KeiyoushiRepoService {
+    public var allSources: [ExtensionSourceItem] = []
+    public var isLoadingRepo = false
+    public var isCheckingHealth = false
+    public var checkedCount = 0
+    public var errorMessage: String?
+
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 6.0
+        config.timeoutIntervalForResource = 8.0
+        config.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: config)
+    }()
+
+    private let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+
+    public nonisolated init() {}
+
+    public func loadRepository(from inputURLString: String = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb") async {
+        isLoadingRepo = true
+        errorMessage = nil
+        defer { isLoadingRepo = false }
+
+        let normalizedURLString = inputURLString
+            .replacingOccurrences(of: "github.com/keiyoushi/extensions/raw/repo", with: "raw.githubusercontent.com/keiyoushi/extensions/repo")
+            .replacingOccurrences(of: "index.pb", with: "index.min.json")
+
+        guard let indexURL = URL(string: normalizedURLString) else {
+            errorMessage = "Invalid repository URL."
+            return
+        }
+
+        let repoBaseURL = indexURL.deletingLastPathComponent()
+
+        do {
+            var request = URLRequest(url: indexURL)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                errorMessage = "Repo returned non-200 status."
+                return
+            }
+
+            let decodedExtensions = try JSONDecoder().decode([KeiyoushiExtensionDTO].self, from: data)
+
+            var extracted: [ExtensionSourceItem] = []
+            var seenIDs = Set<String>()
+
+            for ext in decodedExtensions {
+                let iconURL = repoBaseURL
+                    .appendingPathComponent("icon")
+                    .appendingPathComponent("\(ext.pkg).png")
+
+                guard let rawSources = ext.sources, !rawSources.isEmpty else { continue }
+
+                for src in rawSources {
+                    let lang = src.lang.isEmpty ? (ext.lang ?? "en") : src.lang
+                    let uniqueID = "\(src.id)_\(lang)"
+                    guard !seenIDs.contains(uniqueID) else { continue }
+                    seenIDs.insert(uniqueID)
+
+                    let primaryURL = src.baseUrl
+                        .components(separatedBy: ",")
+                        .first?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? src.baseUrl
+
+                    guard primaryURL.hasPrefix("http") else { continue }
+
+                    extracted.append(
+                        ExtensionSourceItem(
+                            id: uniqueID,
+                            name: src.name,
+                            pkg: ext.pkg,
+                            lang: lang,
+                            baseUrl: primaryURL,
+                            version: ext.version ?? "1.0.0",
+                            isNsfw: (ext.nsfw ?? 0) == 1,
+                            iconURL: iconURL
+                        )
+                    )
+                }
+            }
+
+            self.allSources = extracted.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        } catch {
+            self.errorMessage = "Failed to decode repo: \(error.localizedDescription)"
+        }
+    }
+
+    public func checkAllSources(
+        languageFilter: String? = "en",
+        maxConcurrency: Int = 25,
+        onProgress: (@MainActor (Int) -> Void)? = nil
+    ) async {
+        guard !isCheckingHealth else { return }
+        isCheckingHealth = true
+        checkedCount = 0
+        defer { isCheckingHealth = false }
+
+        let targetIndices = allSources.indices.filter { idx in
+            guard let lang = languageFilter, !lang.isEmpty else { return true }
+            let itemLang = allSources[idx].lang.lowercased()
+            return itemLang == lang.lowercased() || itemLang == "all"
+        }
+
+        for idx in targetIndices {
+            allSources[idx].status = .checking
+        }
+
+        let sessionRef = self.session
+        let ua = self.userAgent
+
+        await withTaskGroup(of: (Int, SourceHealthStatus).self) { group in
+            var iterator = targetIndices.makeIterator()
+
+            for _ in 0..<min(maxConcurrency, targetIndices.count) {
+                if let idx = iterator.next() {
+                    let baseUrl = allSources[idx].baseUrl
+                    group.addTask {
+                        let status = await Self.pingSource(baseUrl: baseUrl, session: sessionRef, userAgent: ua)
+                        return (idx, status)
+                    }
+                }
+            }
+
+            for await (idx, resultStatus) in group {
+                allSources[idx].status = resultStatus
+                checkedCount += 1
+                onProgress?(checkedCount)
+
+                if let nextIdx = iterator.next() {
+                    let baseUrl = allSources[nextIdx].baseUrl
+                    group.addTask {
+                        let status = await Self.pingSource(baseUrl: baseUrl, session: sessionRef, userAgent: ua)
+                        return (nextIdx, status)
+                    }
+                }
+            }
+        }
+    }
+
+    public func checkSingleSource(id: String) async {
+        guard let idx = allSources.firstIndex(where: { $0.id == id || id.hasSuffix(".\($0.id)") }) else { return }
+        allSources[idx].status = .checking
+        let baseUrl = allSources[idx].baseUrl
+        let result = await Self.pingSource(baseUrl: baseUrl, session: session, userAgent: userAgent)
+        allSources[idx].status = result
+    }
+
+    nonisolated private static func pingSource(baseUrl: String, session: URLSession, userAgent: String) async -> SourceHealthStatus {
+        guard let url = URL(string: baseUrl) else {
+            return .offline("Invalid URL")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(baseUrl, forHTTPHeaderField: "Referer")
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return .offline("No HTTP response")
+            }
+
+            switch http.statusCode {
+            case 200...399:
+                return .online(statusCode: http.statusCode)
+            case 403, 503:
+                let server = (http.value(forHTTPHeaderField: "Server") ?? "").lowercased()
+                if server.contains("cloudflare") || http.value(forHTTPHeaderField: "cf-ray") != nil {
+                    return .cloudflareProtected
+                }
+                return .offline("HTTP \(http.statusCode)")
+            default:
+                return .offline("HTTP \(http.statusCode)")
+            }
+        } catch let error as URLError {
+            if error.code == .timedOut {
+                return .offline("Timeout")
+            }
+            return .offline("Code \(error.errorCode)")
+        } catch {
+            return .offline("Unreachable")
+        }
+    }
+}
+
+// MARK: - Tolerant Repository DTOs
 
 private struct RepositoryManifestDTO: Decodable {
     let name: String?
