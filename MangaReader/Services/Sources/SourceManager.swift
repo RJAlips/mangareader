@@ -68,19 +68,107 @@ public final class SourceManager: ObservableObject {
     }
     
     private init() {
+        // 1. Built-in default native providers
+        let demo = DemoMangaSource()
         let mangadex = MangaDexSource()
         let komga = KomgaSource()
         
-        self.sources = [mangadex, komga]
+        // 2. Built-in Community Web Sources
+        let aqua = CommunityWebSource(
+            manifest: SourceManifest(
+                id: "com.mangareader.source.aquamanga",
+                name: "Aqua Manga",
+                version: "1.3.0",
+                versionCode: 130,
+                lang: "EN",
+                baseURL: "https://aquareader.org",
+                iconURL: URL(string: "https://aquareader.org/favicon.ico"),
+                isEnabled: true,
+                supportsLatest: true,
+                supportsSearch: true,
+                sourceDescription: "Popular manhwa, manhua and manga titles from Aqua Manga"
+            ),
+            baseURLString: "https://aquareader.org",
+            popularURL: "https://aquareader.org/",
+            latestURL: "https://aquareader.org/manga/?m_orderby=latest",
+            searchURL: "https://aquareader.org/?s={query}&post_type=wp-manga"
+        )
+        
+        let asura = CommunityWebSource(
+            manifest: SourceManifest(
+                id: "com.mangareader.source.asurascans",
+                name: "Asura Scans",
+                version: "1.4.2",
+                versionCode: 142,
+                lang: "EN",
+                baseURL: "https://asurascans.com",
+                iconURL: URL(string: "https://asurascans.com/images/logo.webp"),
+                isEnabled: true,
+                supportsLatest: true,
+                supportsSearch: true,
+                sourceDescription: "High quality action manhwa & webtoons translation group"
+            ),
+            baseURLString: "https://asurascans.com",
+            popularURL: "https://asurascans.com/browse",
+            latestURL: "https://asurascans.com/browse",
+            searchURL: "https://asurascans.com/browse?search={query}"
+        )
+        
+        let asq = CommunityWebSource(
+            manifest: SourceManifest(
+                id: "com.mangareader.source.3asq",
+                name: "3asq",
+                version: "1.2.0",
+                versionCode: 120,
+                lang: "AR",
+                baseURL: "https://3asq.online",
+                iconURL: URL(string: "https://3asq.online/favicon.ico"),
+                isEnabled: true,
+                supportsLatest: true,
+                supportsSearch: true,
+                sourceDescription: "Leading Arabic manga and webtoon translation community"
+            ),
+            baseURLString: "https://3asq.online",
+            popularURL: "https://3asq.online/",
+            latestURL: "https://3asq.online/latest",
+            searchURL: "https://3asq.online/?s={query}&post_type=wp-manga"
+        )
+        
+        let armageddon = CommunityWebSource(
+            manifest: SourceManifest(
+                id: "com.mangareader.source.armageddon",
+                name: "Flame Comics",
+                version: "1.1.0",
+                versionCode: 110,
+                lang: "EN",
+                baseURL: "https://flamecomics.xyz",
+                iconURL: URL(string: "https://flamecomics.xyz/favicon.ico"),
+                isEnabled: true,
+                supportsLatest: true,
+                supportsSearch: true,
+                sourceDescription: "Curated martial arts, cultivation and fantasy manhwa scans from Flame Comics"
+            ),
+            baseURLString: "https://flamecomics.xyz",
+            popularURL: "https://flamecomics.xyz/",
+            latestURL: "https://flamecomics.xyz/",
+            searchURL: "https://flamecomics.xyz/browse?q={query}"
+        )
+        
+        self.sources = [demo, mangadex, komga, aqua, asura, asq, armageddon]
         
         loadInstalledManifests(defaultSources: self.sources)
         
         if let saved = UserDefaults.standard.stringArray(forKey: userDefaultsKey) {
             self.enabledSourceIDs = Set(saved)
+            self.enabledSourceIDs.insert(aqua.manifest.id)
+            self.enabledSourceIDs.insert(asura.manifest.id)
+            self.enabledSourceIDs.insert(asq.manifest.id)
+            self.enabledSourceIDs.insert(armageddon.manifest.id)
             self.enabledSourceIDs.insert(mangadex.manifest.id)
+            self.enabledSourceIDs.insert(demo.manifest.id)
             self.enabledSourceIDs.insert(komga.manifest.id)
         } else {
-            self.enabledSourceIDs = [mangadex.manifest.id, komga.manifest.id]
+            self.enabledSourceIDs = [demo.manifest.id, mangadex.manifest.id, komga.manifest.id, aqua.manifest.id, asura.manifest.id, asq.manifest.id, armageddon.manifest.id]
             saveEnabledSources()
         }
         
